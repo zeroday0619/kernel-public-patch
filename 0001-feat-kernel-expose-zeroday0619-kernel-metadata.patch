@@ -1,0 +1,361 @@
+Subject: [PATCH] feat(kernel): expose zeroday0619 kernel metadata
+
+Expose structured release metadata for the zeroday0619 high-performance
+custom kernel under /sys/kernel/v_kernel. The directory name abbreviates
+"version kernel" and is not the kernel product name. Provide the complete
+release, base version, configured codename and revision, compiler family,
+target architecture, and build UUID as read-only attributes.
+
+Restrict build_uuid to root-readable mode 0400 because its stable value
+can be used to correlate systems.
+
+Build the local release component from the structured Kconfig fields.
+Detect Clang and GCC automatically so the release and sysfs compiler
+value cannot diverge. Reject unsupported metadata characters before
+creating include/config/kernel.release.
+
+Derive a UUIDv8 from the vmlinux GNU build ID. This keeps the identifier
+stable for identical binaries without introducing random build inputs.
+
+Validation:
+- Passed POSIX shell syntax validation for scripts/setlocalversion.
+- Verified LLVM and GCC release string generation.
+- Verified invalid codename rejection.
+- Verified build_uuid uses root-readable sysfs mode 0400.
+- Passed ABI document validation; existing unrelated duplicate warnings
+  remain.
+- Kernel build and runtime validation were not performed at the request
+  of the user.
+
+---
+ 7 files changed, 266 insertions(+), 2 deletions(-)
+ create mode 100644 Documentation/ABI/testing/sysfs-kernel-v_kernel
+ create mode 100644 kernel/v_kernel.c
+diff --git a/init/Kconfig b/init/Kconfig
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -314,6 +314,35 @@
+ 
+ 	  which is done within the script "scripts/setlocalversion".)
+ 
++config V_KERNEL_INFO
++	bool "Expose zeroday0619 custom kernel metadata through sysfs"
++	depends on SYSFS
++	default y
++	help
++	  Create /sys/kernel/v_kernel and expose immutable metadata for the
++	  running zeroday0619 high-performance custom kernel. The directory
++	  name abbreviates "version kernel"; it is not the kernel product name.
++	  When enabled, these structured fields define the local part of the
++	  kernel release. The build ignores localversion files,
++	  CONFIG_LOCALVERSION, LOCALVERSION, and automatic source-control
++	  suffixes while this option is enabled.
++
++config V_KERNEL_CODENAME
++	string "zeroday0619 custom kernel codename"
++	depends on V_KERNEL_INFO
++	default "fxsenshi"
++	help
++	  Set the distribution-specific codename included in the zeroday0619
++	  high-performance custom kernel release and exported through sysfs.
++
++config V_KERNEL_REVISION
++	string "zeroday0619 custom kernel revision"
++	depends on V_KERNEL_INFO
++	default "v1+"
++	help
++	  Set the revision included in the zeroday0619 high-performance custom
++	  kernel release and exported through sysfs. Include any intended
++	  suffix, such as a trailing plus sign, in this value.
+ 
+ config BUILD_SALT
+ 	string "Build ID Salt"
+diff --git a/kernel/Makefile b/kernel/Makefile
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -14,6 +14,7 @@
+ 
+ obj-$(CONFIG_MULTIUSER) += groups.o
+ obj-$(CONFIG_VHOST_TASK) += vhost_task.o
++obj-$(CONFIG_V_KERNEL_INFO) += v_kernel.o
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+ # Do not trace internal ftrace files
+diff --git a/include/linux/buildid.h b/include/linux/buildid.h
+--- a/include/linux/buildid.h
++++ b/include/linux/buildid.h
+@@ -14,7 +14,8 @@
+ int build_id_parse_nofault(struct vm_area_struct *vma, unsigned char *build_id, __u32 *size);
+ int build_id_parse_buf(const void *buf, unsigned char *build_id, u32 buf_size);
+ 
+-#if IS_ENABLED(CONFIG_STACKTRACE_BUILD_ID) || IS_ENABLED(CONFIG_VMCORE_INFO)
++#if IS_ENABLED(CONFIG_STACKTRACE_BUILD_ID) || IS_ENABLED(CONFIG_VMCORE_INFO) || \
++	IS_ENABLED(CONFIG_V_KERNEL_INFO)
+ extern unsigned char vmlinux_build_id[BUILD_ID_SIZE_MAX];
+ void init_vmlinux_build_id(void);
+ #else
+diff --git a/lib/buildid.c b/lib/buildid.c
+--- a/lib/buildid.c
++++ b/lib/buildid.c
+@@ -390,7 +390,8 @@
+ 	return err;
+ }
+ 
+-#if IS_ENABLED(CONFIG_STACKTRACE_BUILD_ID) || IS_ENABLED(CONFIG_VMCORE_INFO)
++#if IS_ENABLED(CONFIG_STACKTRACE_BUILD_ID) || IS_ENABLED(CONFIG_VMCORE_INFO) || \
++	IS_ENABLED(CONFIG_V_KERNEL_INFO)
+ unsigned char vmlinux_build_id[BUILD_ID_SIZE_MAX] __ro_after_init;
+ 
+ /**
+diff --git a/scripts/setlocalversion b/scripts/setlocalversion
+--- a/scripts/setlocalversion
++++ b/scripts/setlocalversion
+@@ -191,6 +191,39 @@
+ 	exit 1
+ fi
+ 
++# The version-kernel fields own the release suffix so they cannot diverge from
++# UTS_RELEASE.
++if grep -q '^CONFIG_V_KERNEL_INFO=y$' include/config/auto.conf; then
++	v_kernel_codename=$(sed -n 's/^CONFIG_V_KERNEL_CODENAME=//p' include/config/auto.conf)
++	v_kernel_revision=$(sed -n 's/^CONFIG_V_KERNEL_REVISION=//p' include/config/auto.conf)
++
++	case "${v_kernel_codename}" in
++	''|*[!A-Za-z0-9._+~-]*)
++		echo "Error: CONFIG_V_KERNEL_CODENAME contains unsupported characters" >&2
++		exit 1
++		;;
++	esac
++
++	case "${v_kernel_revision}" in
++	''|*[!A-Za-z0-9._+~-]*)
++		echo "Error: CONFIG_V_KERNEL_REVISION contains unsupported characters" >&2
++		exit 1
++		;;
++	esac
++
++	if grep -q '^CONFIG_CC_IS_CLANG=y$' include/config/auto.conf; then
++		v_kernel_build_type=llvm
++	elif grep -q '^CONFIG_CC_IS_GCC=y$' include/config/auto.conf; then
++		v_kernel_build_type=gcc
++	else
++		echo "Error: unable to determine the kernel compiler family" >&2
++		exit 1
++	fi
++
++	printf '%s-%s-%s-%s\n' "${KERNELVERSION}" "${v_kernel_codename}" \
++		"${v_kernel_build_type}" "${v_kernel_revision}"
++	exit 0
++fi
+ 
+ # version string from CONFIG_LOCALVERSION
+ config_localversion=$(sed -n 's/^CONFIG_LOCALVERSION=\(.*\)$/\1/p' include/config/auto.conf)
+diff --git a/kernel/v_kernel.c b/kernel/v_kernel.c
+new file mode 100644
+--- /dev/null
++++ b/kernel/v_kernel.c
+@@ -0,0 +1,131 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#define pr_fmt(fmt) "v_kernel: " fmt
++
++#include <generated/compile.h>
++#include <generated/uapi/linux/version.h>
++#include <generated/utsrelease.h>
++
++#include <linux/buildid.h>
++#include <linux/cache.h>
++#include <linux/init.h>
++#include <linux/kobject.h>
++#include <linux/string.h>
++#include <linux/sysfs.h>
++#include <linux/uuid.h>
++
++#if defined(CONFIG_CC_IS_CLANG)
++#define V_KERNEL_BUILD_TYPE "llvm"
++#elif defined(CONFIG_CC_IS_GCC)
++#define V_KERNEL_BUILD_TYPE "gcc"
++#else
++#error Unsupported compiler family for v_kernel metadata
++#endif
++
++#define V_KERNEL_ATTRIBUTE_RO(_name) \
++static struct kobj_attribute _name##_attribute = __ATTR_RO(_name)
++
++static uuid_t v_kernel_build_uuid __ro_after_init;
++
++static ssize_t kernel_release_show(struct kobject *kobject,
++				   struct kobj_attribute *attribute, char *buffer)
++{
++	return sysfs_emit(buffer, "%s\n", UTS_RELEASE);
++}
++V_KERNEL_ATTRIBUTE_RO(kernel_release);
++
++static ssize_t kernel_version_show(struct kobject *kobject,
++				   struct kobj_attribute *attribute, char *buffer)
++{
++	return sysfs_emit(buffer, "%u.%u.%u\n",
++			  (unsigned int)LINUX_VERSION_MAJOR,
++			  (unsigned int)LINUX_VERSION_PATCHLEVEL,
++			  (unsigned int)LINUX_VERSION_SUBLEVEL);
++}
++V_KERNEL_ATTRIBUTE_RO(kernel_version);
++
++static ssize_t kernel_codename_show(struct kobject *kobject,
++				    struct kobj_attribute *attribute, char *buffer)
++{
++	return sysfs_emit(buffer, "%s\n", CONFIG_V_KERNEL_CODENAME);
++}
++V_KERNEL_ATTRIBUTE_RO(kernel_codename);
++
++static ssize_t kernel_buildtype_show(struct kobject *kobject,
++				     struct kobj_attribute *attribute, char *buffer)
++{
++	return sysfs_emit(buffer, "%s\n", V_KERNEL_BUILD_TYPE);
++}
++V_KERNEL_ATTRIBUTE_RO(kernel_buildtype);
++
++static ssize_t kernel_revision_show(struct kobject *kobject,
++				    struct kobj_attribute *attribute, char *buffer)
++{
++	return sysfs_emit(buffer, "%s\n", CONFIG_V_KERNEL_REVISION);
++}
++V_KERNEL_ATTRIBUTE_RO(kernel_revision);
++
++static ssize_t system_architecture_show(struct kobject *kobject,
++					struct kobj_attribute *attribute,
++					char *buffer)
++{
++	return sysfs_emit(buffer, "%s\n", UTS_MACHINE);
++}
++V_KERNEL_ATTRIBUTE_RO(system_architecture);
++
++static ssize_t build_uuid_show(struct kobject *kobject,
++			       struct kobj_attribute *attribute, char *buffer)
++{
++	return sysfs_emit(buffer, "%pUb\n", &v_kernel_build_uuid);
++}
++
++static struct kobj_attribute build_uuid_attribute =
++	__ATTR_RO_MODE(build_uuid, 0400);
++
++static struct attribute *v_kernel_attributes[] = {
++	&kernel_release_attribute.attr,
++	&kernel_version_attribute.attr,
++	&kernel_codename_attribute.attr,
++	&kernel_buildtype_attribute.attr,
++	&kernel_revision_attribute.attr,
++	&system_architecture_attribute.attr,
++	&build_uuid_attribute.attr,
++	NULL,
++};
++
++static const struct attribute_group v_kernel_attribute_group = {
++	.attrs = v_kernel_attributes,
++};
++
++static int __init v_kernel_init(void)
++{
++	struct kobject *v_kernel_kobject;
++	int error;
++
++	if (!memchr_inv(vmlinux_build_id, 0, BUILD_ID_SIZE_MAX)) {
++		pr_err("vmlinux build ID is unavailable\n");
++		return -EINVAL;
++	}
++
++	memcpy(v_kernel_build_uuid.b, vmlinux_build_id, UUID_SIZE);
++	/* UUIDv8 preserves the build identity while using a standard layout. */
++	v_kernel_build_uuid.b[6] =
++		(v_kernel_build_uuid.b[6] & 0x0f) | 0x80;
++	v_kernel_build_uuid.b[8] =
++		(v_kernel_build_uuid.b[8] & 0x3f) | 0x80;
++
++	v_kernel_kobject = kobject_create_and_add("v_kernel", kernel_kobj);
++	if (!v_kernel_kobject)
++		return -ENOMEM;
++
++	error = sysfs_create_group(v_kernel_kobject,
++				   &v_kernel_attribute_group);
++	if (error) {
++		kobject_put(v_kernel_kobject);
++		pr_err("failed to create sysfs attributes: %d\n", error);
++		return error;
++	}
++
++	return 0;
++}
++late_initcall(v_kernel_init);
+diff --git a/Documentation/ABI/testing/sysfs-kernel-v_kernel b/Documentation/ABI/testing/sysfs-kernel-v_kernel
+new file mode 100644
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-kernel-v_kernel
+@@ -0,0 +1,68 @@
++What:		/sys/kernel/v_kernel
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		The directory name abbreviates "version kernel". It contains
++		immutable metadata describing the running zeroday0619
++		high-performance custom kernel. All attributes are read-only and
++		newline-terminated.
++
++What:		/sys/kernel/v_kernel/kernel_release
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		The complete kernel release string. For example,
++		"7.2.0-fxsenshi-llvm-v1+".
++
++What:		/sys/kernel/v_kernel/kernel_version
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		The base Linux version without the custom release metadata. For
++		example,
++		"7.2.0".
++
++What:		/sys/kernel/v_kernel/kernel_codename
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		The distribution-specific codename configured by
++		CONFIG_V_KERNEL_CODENAME.
++
++What:		/sys/kernel/v_kernel/kernel_buildtype
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		The compiler family used to build the kernel. The value is "llvm"
++		for Clang builds and "gcc" for GCC builds.
++
++What:		/sys/kernel/v_kernel/kernel_revision
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		The distribution-specific revision configured by
++		CONFIG_V_KERNEL_REVISION.
++
++What:		/sys/kernel/v_kernel/system_architecture
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		The target architecture recorded in UTS_MACHINE at build time.
++
++What:		/sys/kernel/v_kernel/build_uuid
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	zeroday0619 high-performance custom kernel maintainers
++Description:
++		A UUIDv8 derived from the GNU build ID of the running vmlinux.
++		Identical vmlinux binaries have identical values. The attribute has
++		mode 0400 because the stable identifier can be used to correlate
++		systems. It is readable only by root and must not be treated as a
++		secret or credential.
