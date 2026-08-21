@@ -1,39 +1,10 @@
 Subject: [PATCH] feat(kernel): expose zeroday0619 kernel metadata
 
-Expose structured release metadata for the zeroday0619 high-performance
-custom kernel under /sys/kernel/v_kernel. Provide the complete
-release, base version, configured codename and revision, compiler family,
-target architecture, and build UUID as read-only attributes.
-
-Restrict build_uuid to root-readable mode 0400 because its stable value
-can be used to correlate systems.
-
-Build the local release component from the structured Kconfig fields.
-Detect Clang and GCC automatically so the release and sysfs compiler
-value cannot diverge. Reject unsupported metadata characters before
-creating include/config/kernel.release.
-
-Derive a UUIDv8 from the vmlinux GNU build ID. This keeps the identifier
-stable for identical binaries without introducing random build inputs.
-
-Validation:
-- Passed POSIX shell syntax validation for scripts/setlocalversion.
-- Verified LLVM and GCC release string generation.
-- Verified invalid codename rejection.
-- Verified build_uuid uses root-readable sysfs mode 0400.
-- Passed ABI document validation; existing unrelated duplicate warnings
-  remain.
-- Kernel build and runtime validation were not performed at the request
-  of the user.
-
 ---
- 7 files changed, 266 insertions(+), 2 deletions(-)
- create mode 100644 Documentation/ABI/testing/sysfs-kernel-v_kernel
- create mode 100644 kernel/v_kernel.c
 diff --git a/init/Kconfig b/init/Kconfig
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -314,6 +314,35 @@
+@@ -314,6 +314,21 @@
  
  	  which is done within the script "scripts/setlocalversion".)
  
@@ -41,30 +12,16 @@ diff --git a/init/Kconfig b/init/Kconfig
 +	bool "Expose zeroday0619 custom kernel metadata through sysfs"
 +	depends on SYSFS
 +	default y
-+	help
-+	  Create /sys/kernel/v_kernel and expose immutable metadata for the
-+	  running zeroday0619 high-performance custom kernel.
-+	  When enabled, these structured fields define the local part of the
-+	  kernel release. The build ignores localversion files,
-+	  CONFIG_LOCALVERSION, LOCALVERSION, and automatic source-control
-+	  suffixes while this option is enabled.
 +
 +config V_KERNEL_CODENAME
 +	string "zeroday0619 custom kernel codename"
 +	depends on V_KERNEL_INFO
 +	default "fxsenshi"
-+	help
-+	  Set the distribution-specific codename included in the zeroday0619
-+	  high-performance custom kernel release and exported through sysfs.
 +
 +config V_KERNEL_REVISION
 +	string "zeroday0619 custom kernel revision"
 +	depends on V_KERNEL_INFO
 +	default "v1+"
-+	help
-+	  Set the revision included in the zeroday0619 high-performance custom
-+	  kernel release and exported through sysfs. Include any intended
-+	  suffix, such as a trailing plus sign, in this value.
  
  config BUILD_SALT
  	string "Build ID Salt"
@@ -108,12 +65,10 @@ diff --git a/lib/buildid.c b/lib/buildid.c
 diff --git a/scripts/setlocalversion b/scripts/setlocalversion
 --- a/scripts/setlocalversion
 +++ b/scripts/setlocalversion
-@@ -191,6 +191,39 @@
+@@ -191,6 +191,37 @@
  	exit 1
  fi
  
-+# The version-kernel fields own the release suffix so they cannot diverge from
-+# UTS_RELEASE.
 +if grep -q '^CONFIG_V_KERNEL_INFO=y$' include/config/auto.conf; then
 +	v_kernel_codename=$(sed -n 's/^CONFIG_V_KERNEL_CODENAME=//p' include/config/auto.conf)
 +	v_kernel_revision=$(sed -n 's/^CONFIG_V_KERNEL_REVISION=//p' include/config/auto.conf)
@@ -152,7 +107,7 @@ diff --git a/kernel/v_kernel.c b/kernel/v_kernel.c
 new file mode 100644
 --- /dev/null
 +++ b/kernel/v_kernel.c
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,130 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +
 +#define pr_fmt(fmt) "v_kernel: " fmt
@@ -263,7 +218,6 @@ new file mode 100644
 +	}
 +
 +	memcpy(v_kernel_build_uuid.b, vmlinux_build_id, UUID_SIZE);
-+	/* UUIDv8 preserves the build identity while using a standard layout. */
 +	v_kernel_build_uuid.b[6] =
 +		(v_kernel_build_uuid.b[6] & 0x0f) | 0x80;
 +	v_kernel_build_uuid.b[8] =
@@ -284,76 +238,3 @@ new file mode 100644
 +	return 0;
 +}
 +late_initcall(v_kernel_init);
-diff --git a/Documentation/ABI/testing/sysfs-kernel-v_kernel b/Documentation/ABI/testing/sysfs-kernel-v_kernel
-new file mode 100644
---- /dev/null
-+++ b/Documentation/ABI/testing/sysfs-kernel-v_kernel
-@@ -0,0 +1,68 @@
-+What:		/sys/kernel/v_kernel
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		The directory name abbreviates "version kernel". It contains
-+		immutable metadata describing the running zeroday0619
-+		high-performance custom kernel. All attributes are read-only and
-+		newline-terminated.
-+
-+What:		/sys/kernel/v_kernel/kernel_release
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		The complete kernel release string. For example,
-+		"7.2.0-fxsenshi-llvm-v1+".
-+
-+What:		/sys/kernel/v_kernel/kernel_version
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		The base Linux version without the custom release metadata. For
-+		example,
-+		"7.2.0".
-+
-+What:		/sys/kernel/v_kernel/kernel_codename
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		The distribution-specific codename configured by
-+		CONFIG_V_KERNEL_CODENAME.
-+
-+What:		/sys/kernel/v_kernel/kernel_buildtype
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		The compiler family used to build the kernel. The value is "llvm"
-+		for Clang builds and "gcc" for GCC builds.
-+
-+What:		/sys/kernel/v_kernel/kernel_revision
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		The distribution-specific revision configured by
-+		CONFIG_V_KERNEL_REVISION.
-+
-+What:		/sys/kernel/v_kernel/system_architecture
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		The target architecture recorded in UTS_MACHINE at build time.
-+
-+What:		/sys/kernel/v_kernel/build_uuid
-+Date:		August 2026
-+KernelVersion:	7.2
-+Contact:	zeroday0619 high-performance custom kernel maintainers
-+Description:
-+		A UUIDv8 derived from the GNU build ID of the running vmlinux.
-+		Identical vmlinux binaries have identical values. The attribute has
-+		mode 0400 because the stable identifier can be used to correlate
-+		systems. It is readable only by root and must not be treated as a
-+		secret or credential.
