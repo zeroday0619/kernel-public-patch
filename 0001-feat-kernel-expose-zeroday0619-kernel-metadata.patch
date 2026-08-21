@@ -1,8 +1,7 @@
 Subject: [PATCH] feat(kernel): expose zeroday0619 kernel metadata
 
 Expose structured release metadata for the zeroday0619 high-performance
-custom kernel under /sys/kernel/v_kernel. The directory name abbreviates
-"version kernel" and is not the kernel product name. Provide the complete
+custom kernel under /sys/kernel/v_kernel. Provide the complete
 release, base version, configured codename and revision, compiler family,
 target architecture, and build UUID as read-only attributes.
 
@@ -44,8 +43,7 @@ diff --git a/init/Kconfig b/init/Kconfig
 +	default y
 +	help
 +	  Create /sys/kernel/v_kernel and expose immutable metadata for the
-+	  running zeroday0619 high-performance custom kernel. The directory
-+	  name abbreviates "version kernel"; it is not the kernel product name.
++	  running zeroday0619 high-performance custom kernel.
 +	  When enabled, these structured fields define the local part of the
 +	  kernel release. The build ignores localversion files,
 +	  CONFIG_LOCALVERSION, LOCALVERSION, and automatic source-control
