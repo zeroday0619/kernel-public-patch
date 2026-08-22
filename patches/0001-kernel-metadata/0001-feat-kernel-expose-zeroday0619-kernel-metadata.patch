@@ -3,18 +3,20 @@ Subject: [PATCH] feat(kernel): expose zeroday0619 kernel metadata
 Expose structured identity and build metadata for the zeroday0619 high
 performance kernel under /sys/kernel/zeroday0619. Include the product
 name, complete release, base version, codename, deployment profile,
-compiler family, revision, target architecture, and build UUID.
+kernel flavor, compiler family, revision, target architecture, and build
+UUID.
 
 Build the release from structured Kconfig fields. Restrict deployment
-profiles to workstation and server, detect the compiler family
-automatically, and reject unsupported metadata characters.
+profiles to workstation and server, restrict kernel flavors to generic,
+bore, and rt, detect the compiler family automatically, and reject
+unsupported metadata characters.
 
 Validation:
 - Passed git diff --check.
 - Checkpatch reported no source errors; MAINTAINERS review remains.
 - SPDX validation was not run because the Python ply module is unavailable.
 - Passed POSIX shell syntax validation for scripts/setlocalversion.
-- Verified workstation and server release formatting.
+- Verified generic, bore, and rt release formatting.
 - Kernel build and runtime validation were not performed at user request.
 
 ---
@@ -33,10 +35,10 @@ index 7acc06b22fb7..943ddae36f03 100644
  void init_vmlinux_build_id(void);
  #else
 diff --git a/init/Kconfig b/init/Kconfig
-index c682cb5b5879..bf345b747ec3 100644
+index c682cb5b5879..d4d888e4ccea 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -311,6 +311,40 @@ config LOCALVERSION_AUTO
+@@ -311,6 +311,48 @@ config LOCALVERSION_AUTO
  
  	  which is done within the script "scripts/setlocalversion".)
  
@@ -57,6 +59,14 @@ index c682cb5b5879..bf345b747ec3 100644
 +	help
 +	  Set the deployment profile included in the kernel release and exposed
 +	  through sysfs. Supported values are "workstation" and "server".
++
++config ZERODAY0619_KERNEL_FLAVOR
++	string "zeroday0619 kernel flavor"
++	depends on ZERODAY0619_KERNEL_INFO
++	default "generic"
++	help
++	  Set the kernel flavor included in the kernel release and exposed through
++	  sysfs. Supported values are "generic", "bore", and "rt".
 +
 +config ZERODAY0619_KERNEL_CODENAME
 +	string "zeroday0619 kernel codename"
@@ -104,10 +114,10 @@ index c4b737640621..b47fa7d66565 100644
  
  /**
 diff --git a/scripts/setlocalversion b/scripts/setlocalversion
-index 28169d7e143b..396f9a7d6ed4 100755
+index 28169d7e143b..df7e340ae059 100755
 --- a/scripts/setlocalversion
 +++ b/scripts/setlocalversion
-@@ -191,6 +191,51 @@ if ! test -e include/config/auto.conf; then
+@@ -191,6 +191,62 @@ if ! test -e include/config/auto.conf; then
  	exit 1
  fi
  
@@ -115,12 +125,22 @@ index 28169d7e143b..396f9a7d6ed4 100755
 +	zeroday0619_kernel_info_codename=$(sed -n 's/^CONFIG_ZERODAY0619_KERNEL_CODENAME=//p' include/config/auto.conf)
 +	zeroday0619_kernel_info_revision=$(sed -n 's/^CONFIG_ZERODAY0619_KERNEL_REVISION=//p' include/config/auto.conf)
 +	zeroday0619_kernel_info_profile=$(sed -n 's/^CONFIG_ZERODAY0619_KERNEL_PROFILE=//p' include/config/auto.conf)
++	zeroday0619_kernel_info_flavor=$(sed -n 's/^CONFIG_ZERODAY0619_KERNEL_FLAVOR=//p' include/config/auto.conf)
 +
 +	case "${zeroday0619_kernel_info_profile}" in
 +	workstation|server)
 +		;;
 +	*)
 +		echo "Error: CONFIG_ZERODAY0619_KERNEL_PROFILE must be workstation or server" >&2
++		exit 1
++		;;
++	esac
++
++	case "${zeroday0619_kernel_info_flavor}" in
++	generic|bore|rt)
++		;;
++	*)
++		echo "Error: CONFIG_ZERODAY0619_KERNEL_FLAVOR must be generic, bore, or rt" >&2
 +		exit 1
 +		;;
 +	esac
@@ -148,9 +168,10 @@ index 28169d7e143b..396f9a7d6ed4 100755
 +		exit 1
 +	fi
 +
-+	printf '%s-%s-%s-%s-%s\n' "${KERNELVERSION}" \
++	printf '%s-%s-%s-%s-%s-%s\n' "${KERNELVERSION}" \
 +		"${zeroday0619_kernel_info_codename}" \
 +		"${zeroday0619_kernel_info_profile}" \
++		"${zeroday0619_kernel_info_flavor}" \
 +		"${zeroday0619_kernel_info_build_type}" \
 +		"${zeroday0619_kernel_info_revision}"
 +	exit 0
@@ -161,10 +182,10 @@ index 28169d7e143b..396f9a7d6ed4 100755
  
 diff --git a/kernel/zeroday0619_kernel_info.c b/kernel/zeroday0619_kernel_info.c
 new file mode 100644
-index 000000000000..73a51348a75d
+index 000000000000..1b7f7be1b6a0
 --- /dev/null
 +++ b/kernel/zeroday0619_kernel_info.c
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,172 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +
 +#define pr_fmt(fmt) "zeroday0619_kernel_info: " fmt
@@ -192,6 +213,7 @@ index 000000000000..73a51348a75d
 +#define ZERODAY0619_KERNEL_INFO_PRODUCT_NAME \
 +	"zeroday0619 high performance kernel"
 +#define ZERODAY0619_KERNEL_INFO_PROFILE CONFIG_ZERODAY0619_KERNEL_PROFILE
++#define ZERODAY0619_KERNEL_INFO_FLAVOR CONFIG_ZERODAY0619_KERNEL_FLAVOR
 +
 +#define ZERODAY0619_KERNEL_INFO_ATTRIBUTE_RO(_name) \
 +static struct kobj_attribute _name##_attribute = __ATTR_RO(_name)
@@ -242,6 +264,14 @@ index 000000000000..73a51348a75d
 +
 +ZERODAY0619_KERNEL_INFO_ATTRIBUTE_RO(kernel_profile);
 +
++static ssize_t kernel_flavor_show(struct kobject *kobject,
++				  struct kobj_attribute *attribute, char *buffer)
++{
++	return sysfs_emit(buffer, "%s\n", ZERODAY0619_KERNEL_INFO_FLAVOR);
++}
++
++ZERODAY0619_KERNEL_INFO_ATTRIBUTE_RO(kernel_flavor);
++
 +static ssize_t kernel_buildtype_show(struct kobject *kobject,
 +				     struct kobj_attribute *attribute, char *buffer)
 +{
@@ -283,6 +313,7 @@ index 000000000000..73a51348a75d
 +	&kernel_version_attribute.attr,
 +	&kernel_codename_attribute.attr,
 +	&kernel_profile_attribute.attr,
++	&kernel_flavor_attribute.attr,
 +	&kernel_buildtype_attribute.attr,
 +	&kernel_revision_attribute.attr,
 +	&system_architecture_attribute.attr,

@@ -19,7 +19,7 @@ other performance optimizations.
 | Base commit | [`5c28b6663fbb6d258da53c39d2c8abb30abaafe1`](https://github.com/CachyOS/linux/commit/5c28b6663fbb6d258da53c39d2c8abb30abaafe1) |
 | Kernel source version | `7.2.0-rc1` |
 | Patch paths | 6 |
-| Patch delta | 246 insertions, 2 deletions |
+| Patch delta | 275 insertions, 2 deletions |
 
 The base commit is the reproducible compatibility boundary. The branch name is
 informational and may move after this document is published.
@@ -29,7 +29,7 @@ informational and may move after this document is published.
 | Path | Change |
 | --- | --- |
 | `include/linux/buildid.h` | Makes the vmlinux build-ID interface available when the metadata feature is enabled. |
-| `init/Kconfig` | Adds the metadata feature, profile, codename, and revision settings. |
+| `init/Kconfig` | Adds the metadata feature, profile, flavor, codename, and revision settings. |
 | `kernel/Makefile` | Builds the metadata implementation into the kernel when enabled. |
 | `lib/buildid.c` | Provides vmlinux build-ID storage for the metadata feature. |
 | `scripts/setlocalversion` | Generates and validates the structured kernel release. |
@@ -41,26 +41,37 @@ informational and may move after this document is published.
 | --- | --- | --- | --- |
 | `CONFIG_ZERODAY0619_KERNEL_INFO` | Boolean | `y` when `SYSFS` is available | Enables the release format and sysfs interface. |
 | `CONFIG_ZERODAY0619_KERNEL_PROFILE` | String | `workstation` | Selects the `workstation` or `server` deployment profile. |
+| `CONFIG_ZERODAY0619_KERNEL_FLAVOR` | String | `generic` | Selects the `generic`, `bore`, or `rt` kernel flavor. |
 | `CONFIG_ZERODAY0619_KERNEL_CODENAME` | String | `fxsenshi` | Sets the distribution codename. |
 | `CONFIG_ZERODAY0619_KERNEL_REVISION` | String | `v1+` | Sets the distribution revision. |
 
-The profile must be exactly `workstation` or `server`. The codename and revision
-must be non-empty and contain only ASCII letters, digits, periods, underscores,
-plus signs, tildes, or hyphens. The compiler family is detected from
-`CONFIG_CC_IS_GCC` or `CONFIG_CC_IS_CLANG`.
+The profile must be exactly `workstation` or `server`. The flavor must be
+exactly `generic`, `bore`, or `rt`. The codename and revision must be non-empty
+and contain only ASCII letters, digits, periods, underscores, plus signs,
+tildes, or hyphens. The compiler family is detected from `CONFIG_CC_IS_GCC` or
+`CONFIG_CC_IS_CLANG`.
 
 ## Kernel release format
 
 When the feature is enabled, `scripts/setlocalversion` returns:
 
 ```text
-<kernel-version>-<codename>-<profile>-<compiler>-<revision>
+<kernel-version>-<codename>-<profile>-<flavor>-<compiler>-<revision>
 ```
 
 For the verified base commit, default metadata, and LLVM, the intended value is:
 
 ```text
-7.2.0-rc1-fxsenshi-workstation-llvm-v1+
+7.2.0-rc1-fxsenshi-workstation-generic-llvm-v1+
+```
+
+With `ibuki`, `workstation`, LLVM, and revision `v1`, the supported flavor
+names produce:
+
+```text
+7.2.0-ibuki-workstation-generic-llvm-v1
+7.2.0-ibuki-workstation-bore-llvm-v1
+7.2.0-ibuki-workstation-rt-llvm-v1
 ```
 
 This path replaces `localversion*`, `CONFIG_LOCALVERSION`, the `LOCALVERSION`
@@ -81,6 +92,7 @@ The patch creates `/sys/kernel/zeroday0619` during late kernel initialization.
 | `kernel_version` | `0444` | Base major, patchlevel, and sublevel |
 | `kernel_codename` | `0444` | Configured codename |
 | `kernel_profile` | `0444` | `workstation` or `server` |
+| `kernel_flavor` | `0444` | `generic`, `bore`, or `rt` |
 | `kernel_buildtype` | `0444` | `gcc` or `llvm` |
 | `kernel_revision` | `0444` | Configured revision |
 | `system_architecture` | `0444` | `UTS_MACHINE` target architecture |
@@ -127,6 +139,7 @@ scripts/config --file "$build_directory/.config" \
     --enable SYSFS \
     --enable ZERODAY0619_KERNEL_INFO \
     --set-str ZERODAY0619_KERNEL_PROFILE workstation \
+    --set-str ZERODAY0619_KERNEL_FLAVOR generic \
     --set-str ZERODAY0619_KERNEL_CODENAME fxsenshi \
     --set-str ZERODAY0619_KERNEL_REVISION 'v1+'
 make O="$build_directory" ARCH=x86 CC=gcc olddefconfig
@@ -153,6 +166,7 @@ test "$(cat "$sysfs_directory/product_name")" = \
     "zeroday0619 high performance kernel"
 test "$(cat "$sysfs_directory/kernel_release")" = "$(uname -r)"
 test "$(cat "$sysfs_directory/kernel_profile")" = "workstation"
+test "$(cat "$sysfs_directory/kernel_flavor")" = "generic"
 test "$(cat "$sysfs_directory/kernel_buildtype")" = "gcc"
 test "$(cat "$sysfs_directory/system_architecture")" = "$(uname -m)"
 test "$(stat -c '%a' "$sysfs_directory/product_name")" = "444"
@@ -173,6 +187,11 @@ Validated against base commit
 - All five modified-file preimage blob IDs match the base commit.
 - `git apply --check --index` passed.
 - `git apply --check --index --whitespace=error-all` passed.
+- POSIX shell syntax validation passed for `scripts/setlocalversion`.
+- All 12 profile, flavor, and compiler combinations produced the expected
+  release format in the non-build shell fixture.
+- Unsupported flavor validation returned a non-zero status and the expected
+  error message.
 
 A full kernel build and runtime boot test have not been performed.
 Runtime behavior remains **Verification required**.
@@ -181,6 +200,8 @@ Runtime behavior remains **Verification required**.
 
 - The sysfs interface has no `Documentation/ABI` entry or dedicated selftest.
 - Compiler metadata records the compiler family, not its version or flags.
+- Kernel flavor metadata is explicitly configured. It does not verify that a
+  matching BORE or PREEMPT_RT implementation is present in the source tree.
 - `kernel_version` contains only the base three-component version.
 - A failed build-ID or sysfs initialization has no fallback interface.
 - No performance benchmark applies because this patch does not change kernel
