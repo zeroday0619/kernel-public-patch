@@ -1,0 +1,25 @@
+reverse 0006-video-workload-profiles.patch: exit 0; whitespace=error-all
+reverse 0005-charcoal.patch: exit 0; whitespace=error-all
+reverse 0004-kernel-metadata.patch: exit 0; whitespace=error-all
+reverse 0003-dkms-clang.patch: exit 0; whitespace=error-all
+reverse 0002-acpi-call.patch: exit 0; whitespace=error-all
+reverse 0001-bore-6.8.0.patch: exit 0; whitespace=error-all
+BORE strict whitespace check: four inherited input whitespace errors preserved verbatim.
+forward 0001-bore-6.8.0.patch: exit 0; whitespace=warn
+forward 0002-acpi-call.patch: exit 0; whitespace=error-all
+forward 0003-dkms-clang.patch: exit 0; whitespace=error-all
+forward 0004-kernel-metadata.patch: exit 0; whitespace=error-all
+forward 0005-charcoal.patch: exit 0; whitespace=error-all
+forward 0006-video-workload-profiles.patch: exit 0; whitespace=error-all
+PASS: byte-identical final contents and executable flags for all 81 paths.
+
+BORE upstream refresh: 2026-09-20T10:10:00Z
+CachyOS path commit: c9ed808e86cc1f5fafdbe208627533ee10499b5b
+Upstream SHA256: 1809a4d4d6508a2a3f92cd8b3b385640583f90bd6cee46584f4bf105affd24a0
+PASS: branch, pinned revision, original input and archived input are byte-identical.
+PASS: live reverse check for the normalized BORE patch (14 paths).
+Patch series payloads unchanged; kernel build/boot/runtime not performed.
+
+Follow-up: kcompressd sysctl bound explicit void-pointer conversion.
+PASS: make LLVM=-22 LLVM_IAS=1 CC="ccache clang-22" -j2 mm/vmscan.o.
+Target object is LLVM IR bitcode; complete kernel link and runtime remain untested.

@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/CachyOS/kernel-patches",
+  "requested_url": "https://github.com/CachyOS/kernel-patches/raw/refs/heads/master/7.2/sched/0001-bore-cachy.patch",
+  "path": "7.2/sched/0001-bore-cachy.patch",
+  "latest_path_commit": "c9ed808e86cc1f5fafdbe208627533ee10499b5b",
+  "commit_subject": "7.2: forward-port BORE scheduler 6.8.0 to 7.2-rc5-1",
+  "commit_date": "2026-07-30T03:34:27Z",
+  "immutable_url": "https://raw.githubusercontent.com/CachyOS/kernel-patches/c9ed808e86cc1f5fafdbe208627533ee10499b5b/7.2/sched/0001-bore-cachy.patch",
+  "checked_at_utc": "2026-09-20T10:10:00Z",
+  "version": "6.8.0",
+  "upstream_sha256": "1809a4d4d6508a2a3f92cd8b3b385640583f90bd6cee46584f4bf105affd24a0",
+  "comparison": "The requested branch URL, immutable commit URL, local input and archived provenance input are byte-identical.",
+  "normalized_patch": "0001-bore-6.8.0.patch",
+  "normalized_patch_sha256": "7a22d63a7695273c31b343474748ed9e8a493232cba7993ba8b0e1f59c296f2f",
+  "local_adaptation": "The include/linux/sched.h insertion follows task_ipi_mask, preserving its Linux 7.2.6 definitions. Mail headers, full blob IDs and hunk offsets were normalized for the recorded base.",
+  "live_reverse_check": {
+    "command": "git apply --reverse --check --whitespace=error-all 0001-bore-6.8.0.patch",
+    "result": "passed on the applied Linux 7.2.6 source",
+    "paths": 14
+  },
+  "source_update_required": false,
+  "kernel_build_performed": false,
+  "boot_or_runtime_test_performed": false
+}

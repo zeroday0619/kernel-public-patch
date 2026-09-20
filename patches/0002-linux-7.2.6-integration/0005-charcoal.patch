@@ -1,0 +1,5179 @@
+Subject: [PATCH 5/6] feat(kernel): port Charcoal changes to Linux 7.2.6
+
+Adapted from linux-charcoal revision dfe38f01a107e8f15725fb053754f612acb72ed9.
+The port retains newer existing scheduler implementations.
+
+Validation: exact indexed forward/reverse application.
+Kernel compilation, boot and hardware behavior remain unverified.
+
+Assisted-by: Codex:GPT-6
+---
+diff --git a/Makefile b/Makefile
+index 1ce353c67dbd92be8262bba25dcb0ae143f21c32..d9e573f135f2c3b61cc8b9025ea48920d4216f8b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -951,6 +951,20 @@ KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
+ KBUILD_RUSTFLAGS += -Cdebug-assertions=$(if $(CONFIG_RUST_DEBUG_ASSERTIONS),y,n)
+ KBUILD_RUSTFLAGS += -Coverflow-checks=$(if $(CONFIG_RUST_OVERFLOW_CHECKS),y,n)
+ 
++ifdef CONFIG_POLLY_CLANG
++KBUILD_CFLAGS	+= -fplugin=LLVMPolly.so \
++		   -mllvm -polly \
++		   -mllvm -polly-ast-use-context \
++		   -mllvm -polly-invariant-load-hoisting \
++		   -mllvm -polly-loopfusion-greedy \
++		   -mllvm -polly-run-inliner \
++		   -mllvm -polly-vectorizer=stripmine
++# Polly must remove proven dead paths to preserve linker dead-code elimination.
++ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
++KBUILD_CFLAGS	+= -mllvm -polly-run-dce
++endif
++endif
++
+ # Tell gcc to never replace conditional load with a non-conditional one
+ ifdef CONFIG_CC_IS_GCC
+ # gcc-10 renamed --param=allow-store-data-races=0 to
+diff --git a/arch/x86/Kconfig.cpu b/arch/x86/Kconfig.cpu
+index c61e0a4e3e60a150c8e38e74fe953a123157d681..25b2bc252190c43dcbd32a850e472823133fefea 100644
+--- a/arch/x86/Kconfig.cpu
++++ b/arch/x86/Kconfig.cpu
+@@ -207,6 +207,7 @@ config CC_HAS_MARCH_NATIVE
+ 
+ choice
+ 	prompt "x86_64 Compiler Build Optimization"
++	depends on X86_64
+ 	default GENERIC_CPU
+ 
+ config X86_NATIVE_CPU
+@@ -230,6 +231,356 @@ config GENERIC_CPU
+ 	  Generic x86-64 CPU.
+           Runs equally well on all x86-64 CPUs.
+ 
++config MK8
++	bool "AMD Opteron/Athlon64/Hammer/K8"
++	help
++	  Select this for an AMD Opteron or Athlon64 Hammer-family processor.
++	  Enables use of some extended instructions, and passes appropriate
++	  optimization flags to GCC.
++
++config MK8SSE3
++	bool "AMD Opteron/Athlon64/Hammer/K8 with SSE3"
++	help
++	  Select this for improved AMD Opteron or Athlon64 Hammer-family processors.
++	  Enables use of some extended instructions, and passes appropriate
++	  optimization flags to GCC.
++
++config MK10
++	bool "AMD 61xx/7x50/PhenomX3/X4/II/K10"
++	help
++	  Select this for an AMD 61xx Eight-Core Magny-Cours, Athlon X2 7x50,
++	  Phenom X3/X4/II, Athlon II X2/X3/X4, or Turion II-family processor.
++	  Enables use of some extended instructions, and passes appropriate
++	  optimization flags to GCC.
++
++config MBARCELONA
++	bool "AMD Barcelona"
++	help
++	  Select this for AMD Family 10h Barcelona processors.
++
++	  Enables -march=barcelona
++
++config MBOBCAT
++	bool "AMD Bobcat"
++	help
++	  Select this for AMD Family 14h Bobcat processors.
++
++	  Enables -march=btver1
++
++config MJAGUAR
++	bool "AMD Jaguar"
++	help
++	  Select this for AMD Family 16h Jaguar processors.
++
++	  Enables -march=btver2
++
++config MBULLDOZER
++	bool "AMD Bulldozer"
++	help
++	  Select this for AMD Family 15h Bulldozer processors.
++
++	  Enables -march=bdver1
++
++config MPILEDRIVER
++	bool "AMD Piledriver"
++	help
++	  Select this for AMD Family 15h Piledriver processors.
++
++	  Enables -march=bdver2
++
++config MSTEAMROLLER
++	bool "AMD Steamroller"
++	help
++	  Select this for AMD Family 15h Steamroller processors.
++
++	  Enables -march=bdver3
++
++config MEXCAVATOR
++	bool "AMD Excavator"
++	help
++	  Select this for AMD Family 15h Excavator processors.
++
++	  Enables -march=bdver4
++
++config MZEN
++	bool "AMD Ryzen"
++	help
++	  Select this for AMD Family 17h Zen processors.
++
++	  Enables -march=znver1
++
++config MZEN2
++	bool "AMD Ryzen 2"
++	help
++	  Select this for AMD Family 17h Zen 2 processors.
++
++	  Enables -march=znver2
++
++config MZEN3
++	bool "AMD Ryzen 3"
++	depends on (CC_IS_GCC && GCC_VERSION >= 100300) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
++	help
++	  Select this for AMD Family 19h Zen 3 processors.
++
++	  Enables -march=znver3
++
++config MZEN5
++	bool "AMD Ryzen 5"
++	depends on (CC_IS_GCC && GCC_VERSION > 140000) || (CC_IS_CLANG && CLANG_VERSION >= 190100)
++	help
++	  Select this for AMD Family 19h Zen 5 processors.
++
++	  Enables -march=znver5
++
++config MPSC
++	bool "Intel P4 / older Netburst based Xeon"
++	depends on X86_64
++	help
++	  Optimize for Intel Pentium 4, Pentium D and older Nocona/Dempsey
++	  Xeon CPUs with Intel 64bit which is compatible with x86-64.
++	  Note that the latest Xeons (Xeon 51xx and 53xx) are not based on the
++	  Netburst core and shouldn't use this option. You can distinguish them
++	  using the cpu family field
++	  in /proc/cpuinfo. Family 15 is an older Xeon, Family 6 a newer one.
++
++config MCORE2
++	bool "Intel Core 2"
++	depends on X86_64
++	help
++
++	  Select this for Intel Core 2 and newer Core 2 Xeons (Xeon 51xx and
++	  53xx) CPUs. You can distinguish newer from older Xeons by the CPU
++	  family in /proc/cpuinfo. Newer ones have 6 and older ones 15
++	  (not a typo)
++
++	  Enables -march=core2
++
++config MNEHALEM
++	bool "Intel Nehalem"
++	depends on X86_64
++	help
++
++	  Select this for 1st Gen Core processors in the Nehalem family.
++
++	  Enables -march=nehalem
++
++config MWESTMERE
++	bool "Intel Westmere"
++	depends on X86_64
++	help
++
++	  Select this for the Intel Westmere formerly Nehalem-C family.
++
++	  Enables -march=westmere
++
++config MSILVERMONT
++	bool "Intel Silvermont"
++	depends on X86_64
++	help
++
++	  Select this for the Intel Silvermont platform.
++
++	  Enables -march=silvermont
++
++config MGOLDMONT
++	bool "Intel Goldmont"
++	depends on X86_64
++	help
++
++	  Select this for the Intel Goldmont platform including Apollo Lake and Denverton.
++
++	  Enables -march=goldmont
++
++config MGOLDMONTPLUS
++	bool "Intel Goldmont Plus"
++	depends on X86_64
++	help
++
++	  Select this for the Intel Goldmont Plus platform including Gemini Lake.
++
++	  Enables -march=goldmont-plus
++
++config MSANDYBRIDGE
++	bool "Intel Sandy Bridge"
++	depends on X86_64
++	help
++
++	  Select this for 2nd Gen Core processors in the Sandy Bridge family.
++
++	  Enables -march=sandybridge
++
++config MIVYBRIDGE
++	bool "Intel Ivy Bridge"
++	depends on X86_64
++	help
++
++	  Select this for 3rd Gen Core processors in the Ivy Bridge family.
++
++	  Enables -march=ivybridge
++
++config MHASWELL
++	bool "Intel Haswell"
++	depends on X86_64
++	help
++
++	  Select this for 4th Gen Core processors in the Haswell family.
++
++	  Enables -march=haswell
++
++config MBROADWELL
++	bool "Intel Broadwell"
++	depends on X86_64
++	help
++
++	  Select this for 5th Gen Core processors in the Broadwell family.
++
++	  Enables -march=broadwell
++
++config MSKYLAKE
++	bool "Intel Skylake"
++	depends on X86_64
++	help
++
++	  Select this for 6th Gen Core processors in the Skylake family.
++
++	  Enables -march=skylake
++
++config MSKYLAKEX
++	bool "Intel Skylake-X (7th Gen Core i7/i9)"
++	depends on X86_64
++	help
++
++	  Select this for 7th Gen Core i7/i9 processors in the Skylake-X family.
++
++	  Enables -march=skylake-avx512
++
++config MCANNONLAKE
++	bool "Intel Cannon Lake"
++	depends on X86_64
++	help
++
++	  Select this for processors in the Cannon Lake family.
++
++	  Enables -march=cannonlake
++
++config MICELAKE_CLIENT
++	bool "Intel Ice Lake"
++	depends on X86_64
++	help
++
++	  Select this for 10th Gen Core client processors in the Ice Lake family.
++
++	  Enables -march=icelake-client
++
++config MICELAKE_SERVER
++	bool "Intel Ice Lake-SP (3rd Gen Xeon Scalable)"
++	depends on X86_64
++	help
++
++	  Select this for 3rd Gen Xeon Scalable processors in the Ice Lake-SP family.
++
++	  Enables -march=icelake-server
++
++config MCOOPERLAKE
++	bool "Intel Cooper Lake"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION > 100100) || (CC_IS_CLANG && CLANG_VERSION >= 100000)
++	help
++
++	  Select this for Xeon processors in the Cooper Lake family.
++
++	  Enables -march=cooperlake
++
++config MCASCADELAKE
++	bool "Intel Cascade Lake"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION > 100100) || (CC_IS_CLANG && CLANG_VERSION >= 100000)
++	help
++
++	  Select this for Xeon processors in the Cascade Lake family.
++
++	  Enables -march=cascadelake
++
++config MTIGERLAKE
++	bool "Intel Tiger Lake"
++	depends on X86_64
++	depends on  (CC_IS_GCC && GCC_VERSION > 100100) || (CC_IS_CLANG && CLANG_VERSION >= 100000)
++	help
++
++	  Select this for third-generation 10 nm process processors in the Tiger Lake family.
++
++	  Enables -march=tigerlake
++
++config MSAPPHIRERAPIDS
++	bool "Intel Sapphire Rapids"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
++	help
++
++	  Select this for fourth-generation 10 nm process processors in the Sapphire Rapids family.
++
++	  Enables -march=sapphirerapids
++
++config MROCKETLAKE
++	bool "Intel Rocket Lake"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
++	help
++
++	  Select this for eleventh-generation processors in the Rocket Lake family.
++
++	  Enables -march=rocketlake
++
++config MALDERLAKE
++	bool "Intel Alder Lake"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
++	help
++
++	  Select this for twelfth-generation processors in the Alder Lake family.
++
++	  Enables -march=alderlake
++
++config MRAPTORLAKE
++	bool "Intel Raptor Lake"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
++	help
++
++	  Select this for thirteenth-generation processors in the Raptor Lake family.
++
++	  Enables -march=raptorlake
++
++config MMETEORLAKE
++	bool "Intel Meteor Lake"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
++	help
++
++	  Select this for fourteenth-generation processors in the Meteor Lake family.
++
++	  Enables -march=meteorlake
++
++config MEMERALDRAPIDS
++	bool "Intel Emerald Rapids"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION > 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
++	help
++
++	  Select this for fifth-generation Xeon Scalable processors in the Emerald Rapids family.
++
++	  Enables -march=emeraldrapids
++
++config MDIAMONDRAPIDS
++	bool "Intel Diamond Rapids (7th Gen Xeon Scalable)"
++	depends on X86_64
++	depends on (CC_IS_GCC && GCC_VERSION > 150000) || (CC_IS_CLANG && CLANG_VERSION >= 200000)
++	help
++
++	  Select this for seventh-generation Xeon Scalable processors in the Diamond Rapids family.
++
++	  Enables -march=diamondrapids
++
+ config MZEN4
+ 	bool "AMD Ryzen 4"
+ 	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 160000)
+@@ -285,7 +636,7 @@ config X86_INTERNODE_CACHE_SHIFT
+ 
+ config X86_L1_CACHE_SHIFT
+ 	int
+-	default "7" if MPENTIUM4
++	default "7" if MPENTIUM4 || MPSC
+ 	default "6" if MK7 || MPENTIUMM || MATOM || MVIAC7 || X86_GENERIC || X86_64
+ 	default "4" if MGEODEGX1
+ 	default "5" if MCRUSOE || MEFFICEON || MCYRIXIII || MK6 || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || MVIAC3_2 || MGEODE_LX
+diff --git a/arch/x86/Makefile b/arch/x86/Makefile
+index 8deb63c473a2d47b3a7457044c865cf20e855b5e..471976e62c4b908281aacaa67ed082e3056fe0c3 100644
+--- a/arch/x86/Makefile
++++ b/arch/x86/Makefile
+@@ -164,6 +164,206 @@ ifdef CONFIG_X86_NATIVE_CPU
+         KBUILD_RUSTFLAGS += -Ctarget-cpu=native
+ endif
+ 
++ifdef CONFIG_MK8
++        KBUILD_CFLAGS += -march=k8
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=k8
++endif
++
++ifdef CONFIG_MK8SSE3
++        KBUILD_CFLAGS += -march=k8-sse3
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=k8-sse3
++endif
++
++ifdef CONFIG_MK10
++        KBUILD_CFLAGS += -march=amdfam10
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=amdfam10
++endif
++
++ifdef CONFIG_MBARCELONA
++        KBUILD_CFLAGS += -march=barcelona
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=barcelona
++endif
++
++ifdef CONFIG_MBOBCAT
++        KBUILD_CFLAGS += -march=btver1
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=btver1
++endif
++
++ifdef CONFIG_MJAGUAR
++        KBUILD_CFLAGS += -march=btver2
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=btver2
++endif
++
++ifdef CONFIG_MBULLDOZER
++        KBUILD_CFLAGS += -march=bdver1
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=bdver1
++endif
++
++ifdef CONFIG_MPILEDRIVER
++        KBUILD_CFLAGS += -march=bdver2 -mno-tbm
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=bdver2 -Ctarget-feature=-tbm
++endif
++
++ifdef CONFIG_MSTEAMROLLER
++        KBUILD_CFLAGS += -march=bdver3 -mno-tbm
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=bdver3 -Ctarget-feature=-tbm
++endif
++
++ifdef CONFIG_MEXCAVATOR
++        KBUILD_CFLAGS += -march=bdver4 -mno-tbm
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=bdver4 -Ctarget-feature=-tbm
++endif
++
++ifdef CONFIG_MZEN
++        KBUILD_CFLAGS += -march=znver1
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=znver1
++endif
++
++ifdef CONFIG_MZEN2
++        KBUILD_CFLAGS += -march=znver2
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=znver2
++endif
++
++ifdef CONFIG_MZEN3
++        KBUILD_CFLAGS += -march=znver3
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=znver3
++endif
++
++ifdef CONFIG_MZEN5
++        KBUILD_CFLAGS += -march=znver5
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=znver5
++endif
++
++ifdef CONFIG_MPSC
++        KBUILD_CFLAGS += -march=nocona
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=nocona
++endif
++
++ifdef CONFIG_MCORE2
++        KBUILD_CFLAGS += -march=core2
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=core2
++endif
++
++ifdef CONFIG_MNEHALEM
++        KBUILD_CFLAGS += -march=nehalem
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=nehalem
++endif
++
++ifdef CONFIG_MWESTMERE
++        KBUILD_CFLAGS += -march=westmere
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=westmere
++endif
++
++ifdef CONFIG_MSILVERMONT
++        KBUILD_CFLAGS += -march=silvermont
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=silvermont
++endif
++
++ifdef CONFIG_MGOLDMONT
++        KBUILD_CFLAGS += -march=goldmont
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=goldmont
++endif
++
++ifdef CONFIG_MGOLDMONTPLUS
++        KBUILD_CFLAGS += -march=goldmont-plus
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=goldmont-plus
++endif
++
++ifdef CONFIG_MSANDYBRIDGE
++        KBUILD_CFLAGS += -march=sandybridge
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=sandybridge
++endif
++
++ifdef CONFIG_MIVYBRIDGE
++        KBUILD_CFLAGS += -march=ivybridge
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=ivybridge
++endif
++
++ifdef CONFIG_MHASWELL
++        KBUILD_CFLAGS += -march=haswell
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=haswell
++endif
++
++ifdef CONFIG_MBROADWELL
++        KBUILD_CFLAGS += -march=broadwell
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=broadwell
++endif
++
++ifdef CONFIG_MSKYLAKE
++        KBUILD_CFLAGS += -march=skylake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=skylake
++endif
++
++ifdef CONFIG_MSKYLAKEX
++        KBUILD_CFLAGS += -march=skylake-avx512
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=skylake-avx512
++endif
++
++ifdef CONFIG_MCANNONLAKE
++        KBUILD_CFLAGS += -march=cannonlake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=cannonlake
++endif
++
++ifdef CONFIG_MICELAKE_CLIENT
++        KBUILD_CFLAGS += -march=icelake-client
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=icelake-client
++endif
++
++ifdef CONFIG_MICELAKE_SERVER
++        KBUILD_CFLAGS += -march=icelake-server
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=icelake-server
++endif
++
++ifdef CONFIG_MCOOPERLAKE
++        KBUILD_CFLAGS += -march=cooperlake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=cooperlake
++endif
++
++ifdef CONFIG_MCASCADELAKE
++        KBUILD_CFLAGS += -march=cascadelake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=cascadelake
++endif
++
++ifdef CONFIG_MTIGERLAKE
++        KBUILD_CFLAGS += -march=tigerlake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=tigerlake
++endif
++
++ifdef CONFIG_MSAPPHIRERAPIDS
++        KBUILD_CFLAGS += -march=sapphirerapids
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=sapphirerapids
++endif
++
++ifdef CONFIG_MROCKETLAKE
++        KBUILD_CFLAGS += -march=rocketlake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=rocketlake
++endif
++
++ifdef CONFIG_MALDERLAKE
++        KBUILD_CFLAGS += -march=alderlake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=alderlake
++endif
++
++ifdef CONFIG_MRAPTORLAKE
++        KBUILD_CFLAGS += -march=raptorlake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=raptorlake
++endif
++
++ifdef CONFIG_MMETEORLAKE
++        KBUILD_CFLAGS += -march=meteorlake
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=meteorlake
++endif
++
++ifdef CONFIG_MEMERALDRAPIDS
++        KBUILD_CFLAGS += -march=emeraldrapids
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=emeraldrapids
++endif
++
++ifdef CONFIG_MDIAMONDRAPIDS
++        KBUILD_CFLAGS += -march=diamondrapids
++        KBUILD_RUSTFLAGS += -Ctarget-cpu=diamondrapids
++endif
++
+ ifdef CONFIG_MZEN4
+         KBUILD_CFLAGS += -march=znver4
+         KBUILD_RUSTFLAGS += -Ctarget-cpu=znver4
+diff --git a/block/Kconfig.iosched b/block/Kconfig.iosched
+index e98585dd83e0f4c6a6b6d866a8ff63bdfdb65a4b..dcbcf7c8a3b2252f29997ef58f288702cb91ab78 100644
+--- a/block/Kconfig.iosched
++++ b/block/Kconfig.iosched
+@@ -18,7 +18,7 @@ config MQ_IOSCHED_KYBER
+ 
+ config MQ_IOSCHED_ADIOS
+ 	tristate "Adaptive Deadline I/O scheduler"
+-	default m
++	default y
+ 	help
+ 	  The Adaptive Deadline I/O Scheduler (ADIOS) is a multi-queue I/O
+ 	  scheduler with learning-based adaptive latency control.
+@@ -26,7 +26,7 @@ config MQ_IOSCHED_ADIOS
+ config MQ_IOSCHED_DEFAULT_ADIOS
+ 	bool "Enable ADIOS I/O scheduler as default MQ I/O scheduler"
+ 	depends on MQ_IOSCHED_ADIOS=y
+-	default n
++	default y
+ 	help
+ 	  Enable the ADIOS I/O scheduler as the default scheduler for MQ I/O.
+ 
+diff --git a/drivers/Makefile b/drivers/Makefile
+index 0841ea851847e8d3466b5459ee29d2a0efbe11c8..71f480cdeeee429371cb68e445ce22bffe1186a9 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -64,14 +64,8 @@ obj-y				+= char/
+ # iommu/ comes before gpu as gpu are using iommu controllers
+ obj-y				+= iommu/
+ 
+-# gpu/ comes after char for AGP vs DRM startup and after iommu
+-obj-y				+= gpu/
+-
+ obj-$(CONFIG_CONNECTOR)		+= connector/
+ 
+-# i810fb depends on char/agp/
+-obj-$(CONFIG_FB_I810)           += video/fbdev/i810/
+-
+ obj-$(CONFIG_PARPORT)		+= parport/
+ obj-y				+= base/ block/ misc/ mfd/ nfc/
+ obj-$(CONFIG_LIBNVDIMM)		+= nvdimm/
+@@ -83,6 +77,13 @@ obj-y				+= macintosh/
+ obj-y				+= scsi/
+ obj-y				+= nvme/
+ obj-$(CONFIG_ATA)		+= ata/
++
++# gpu/ comes after char for AGP vs DRM startup and after iommu
++obj-y				+= gpu/
++
++# i810fb depends on char/agp/
++obj-$(CONFIG_FB_I810)           += video/fbdev/i810/
++
+ obj-$(CONFIG_TARGET_CORE)	+= target/
+ obj-$(CONFIG_MTD)		+= mtd/
+ obj-$(CONFIG_SPI)		+= spi/
+diff --git a/drivers/base/firmware_loader/main.c b/drivers/base/firmware_loader/main.c
+index 24213a0ea83174085a22caf5d491a9917c908dcd..5c70cf8ba512e64ad6524c920ca8961ff49389f6 100644
+--- a/drivers/base/firmware_loader/main.c
++++ b/drivers/base/firmware_loader/main.c
+@@ -859,6 +859,8 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
+ 		goto out;
+ 	}
+ 
++	pr_notice("Loading firmware: %s\n", name);
++
+ 	ret = _request_firmware_prepare(&fw, name, device, buf, size,
+ 					offset, opt_flags);
+ 	if (ret <= 0) /* error or already assigned */
+diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
+index 6cb44e229f1ece36d901292eb4430780a630c7a7..d080ddd66a0a509df725f5047fb5a51ee3672f73 100644
+--- a/drivers/block/zram/zram_drv.c
++++ b/drivers/block/zram/zram_drv.c
+@@ -29,6 +29,7 @@
+ #include <linux/err.h>
+ #include <linux/idr.h>
+ #include <linux/sysfs.h>
++#include <linux/sysctl.h>
+ #include <linux/debugfs.h>
+ #include <linux/cpuhotplug.h>
+ #include <linux/part_stat.h>
+@@ -58,6 +59,23 @@ static const struct block_device_operations zram_devops;
+ 
+ static void slot_free(struct zram *zram, u32 index);
+ 
++#ifdef CONFIG_ZRAM_MULTI_COMP
++static u8 __read_mostly sysctl_zram_recomp_immediate = 1;
++
++static const struct ctl_table zram_sysctl_table[] = {
++	{
++		.procname	= "zram_recomp_immediate",
++		.data		= &sysctl_zram_recomp_immediate,
++		.maxlen		= sizeof(sysctl_zram_recomp_immediate),
++		.mode		= 0644,
++		.proc_handler	= proc_dou8vec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= SYSCTL_THREE,
++	},
++};
++static struct ctl_table_header *zram_sysctl_table_header;
++#endif
++
+ static void slot_lock_init(struct zram *zram)
+ {
+ 	static struct lock_class_key __key;
+@@ -2229,7 +2247,7 @@ static int write_same_filled_page(struct zram *zram, unsigned long fill,
+ }
+ 
+ static int write_incompressible_page(struct zram *zram, struct page *page,
+-				     u32 index)
++				     u32 index, u32 priority, bool incompressible)
+ {
+ 	unsigned long handle;
+ 	void *src;
+@@ -2259,6 +2277,9 @@ static int write_incompressible_page(struct zram *zram, struct page *page,
+ 	set_slot_flag(zram, index, ZRAM_HUGE);
+ 	set_slot_handle(zram, index, handle);
+ 	set_slot_size(zram, index, PAGE_SIZE);
++	set_slot_comp_priority(zram, index, priority);
++	if (incompressible)
++		set_slot_flag(zram, index, ZRAM_INCOMPRESSIBLE);
+ 	slot_unlock(zram, index);
+ 
+ 	atomic64_add(PAGE_SIZE, &zram->stats.compr_data_size);
+@@ -2275,9 +2296,17 @@ static int zram_write_page(struct zram *zram, struct page *page, u32 index)
+ 	unsigned long handle;
+ 	unsigned int comp_len;
+ 	void *mem;
+-	struct zcomp_strm *zstrm;
++	struct zcomp_strm *zstrm = NULL;
+ 	unsigned long element;
+ 	bool same_filled;
++	bool incompressible = true;
++	u32 priority, last_priority = ZRAM_PRIMARY_COMP;
++	u32 priority_limit = ZRAM_MAX_COMPS;
++
++#ifdef CONFIG_ZRAM_MULTI_COMP
++	priority_limit = min_t(u32, ZRAM_MAX_COMPS,
++			       READ_ONCE(sysctl_zram_recomp_immediate) + 1);
++#endif
+ 
+ 	mem = kmap_local_page(page);
+ 	same_filled = page_same_filled(mem, &element);
+@@ -2285,21 +2314,41 @@ static int zram_write_page(struct zram *zram, struct page *page, u32 index)
+ 	if (same_filled)
+ 		return write_same_filled_page(zram, element, index);
+ 
+-	zstrm = zcomp_stream_get(zram->comps[ZRAM_PRIMARY_COMP]);
+-	mem = kmap_local_page(page);
+-	ret = zcomp_compress(zram->comps[ZRAM_PRIMARY_COMP], zstrm,
+-			     mem, &comp_len);
+-	kunmap_local(mem);
++	/* Priority slots can be sparse, so a compressor count is not a bound. */
++	for (priority = ZRAM_PRIMARY_COMP; priority < priority_limit; priority++) {
++		if (!zram->comps[priority])
++			continue;
++
++		last_priority = priority;
++		zstrm = zcomp_stream_get(zram->comps[priority]);
++		mem = kmap_local_page(page);
++		ret = zcomp_compress(zram->comps[priority], zstrm,
++				     mem, &comp_len);
++		kunmap_local(mem);
++
++		if (unlikely(ret)) {
++			zcomp_stream_put(zstrm);
++			pr_err("Compression failed! err=%d\n", ret);
++			return ret;
++		}
++
++		if (comp_len < huge_class_size)
++			break;
+ 
+-	if (unlikely(ret)) {
+ 		zcomp_stream_put(zstrm);
+-		pr_err("Compression failed! err=%d\n", ret);
+-		return ret;
++		zstrm = NULL;
+ 	}
+ 
+-	if (comp_len >= huge_class_size) {
+-		zcomp_stream_put(zstrm);
+-		return write_incompressible_page(zram, page, index);
++	if (!zstrm) {
++		/* Untried compressors must remain eligible for recompression. */
++		for (priority = priority_limit; priority < ZRAM_MAX_COMPS; priority++) {
++			if (zram->comps[priority]) {
++				incompressible = false;
++				break;
++			}
++		}
++		return write_incompressible_page(zram, page, index,
++						 last_priority, incompressible);
+ 	}
+ 
+ 	handle = zs_malloc(zram->mem_pool, comp_len,
+@@ -2323,6 +2372,7 @@ static int zram_write_page(struct zram *zram, struct page *page, u32 index)
+ 	slot_free(zram, index);
+ 	set_slot_handle(zram, index, handle);
+ 	set_slot_size(zram, index, comp_len);
++	set_slot_comp_priority(zram, index, priority);
+ 	slot_unlock(zram, index);
+ 
+ 	/* Update stats */
+@@ -3279,6 +3329,15 @@ static int __init zram_init(void)
+ 		num_devices--;
+ 	}
+ 
++#ifdef CONFIG_ZRAM_MULTI_COMP
++	zram_sysctl_table_header = register_sysctl("vm", zram_sysctl_table);
++	if (IS_ENABLED(CONFIG_SYSCTL) && !zram_sysctl_table_header) {
++		ret = -ENOMEM;
++		goto out_error;
++	}
++	pr_info("ZRAM Immediate Recompression (ZRAM-IR) 1.2 by Masahito Suzuki\n");
++#endif
++
+ 	return 0;
+ 
+ out_error:
+@@ -3288,6 +3347,9 @@ out_error:
+ 
+ static void __exit zram_exit(void)
+ {
++#ifdef CONFIG_ZRAM_MULTI_COMP
++	unregister_sysctl_table(zram_sysctl_table_header);
++#endif
+ 	destroy_devices();
+ }
+ 
+diff --git a/drivers/cpufreq/Kconfig.x86 b/drivers/cpufreq/Kconfig.x86
+index d6190b8dde4b9968001876f3a4b21da6407a7c58..9d10fde562c71f1d5df4e1bc325432b44b2da071 100644
+--- a/drivers/cpufreq/Kconfig.x86
++++ b/drivers/cpufreq/Kconfig.x86
+@@ -8,7 +8,6 @@ config X86_INTEL_PSTATE
+ 	select ACPI_PROCESSOR if ACPI
+ 	select ACPI_CPPC_LIB if X86_64 && ACPI && SCHED_MC_PRIO
+ 	select CPU_FREQ_GOV_PERFORMANCE
+-	select CPU_FREQ_GOV_SCHEDUTIL if SMP
+ 	help
+ 	  This driver provides a P state for Intel core processors.
+ 	  The driver implements an internal governor and will become
+@@ -38,7 +37,6 @@ config X86_AMD_PSTATE
+ 	depends on ACPI
+ 	select ACPI_PROCESSOR
+ 	select ACPI_CPPC_LIB if X86_64
+-	select CPU_FREQ_GOV_SCHEDUTIL if SMP
+ 	select ACPI_PLATFORM_PROFILE
+ 	select POWER_SUPPLY
+ 	help
+diff --git a/drivers/cpuidle/Kconfig b/drivers/cpuidle/Kconfig
+index d6d8386d3f02b7daca45a67e63aa418024568973..802a839684205e53c346f6884a9c568e995160e1 100644
+--- a/drivers/cpuidle/Kconfig
++++ b/drivers/cpuidle/Kconfig
+@@ -44,6 +44,19 @@ config CPU_IDLE_GOV_HALTPOLL
+ 
+ 	  Some virtualized workloads benefit from using it.
+ 
++config CPU_IDLE_GOV_NAP
++	bool "Neural Adaptive Predictor (NAP) governor"
++	depends on X86_64
++	help
++	  An experimental machine-learning cpuidle governor with three
++	  8-to-8-to-1 neural networks and deferred online learning.
++	  Requires SSE2; AVX2 and FMA are used when available.
++
++	  Select explicitly with cpuidle.governor=nap on the kernel
++	  command line or through the cpuidle governor sysfs interface.
++
++	  If unsure, say N.
++
+ config DT_IDLE_STATES
+ 	bool
+ 
+diff --git a/drivers/cpuidle/governors/Makefile b/drivers/cpuidle/governors/Makefile
+index 63abb5393a4d6bb8f80584f9021b89d325966118..ae688891c067ef6e5cd769c4b811c58bb89b13ae 100644
+--- a/drivers/cpuidle/governors/Makefile
++++ b/drivers/cpuidle/governors/Makefile
+@@ -7,3 +7,4 @@ obj-$(CONFIG_CPU_IDLE_GOV_LADDER) += ladder.o
+ obj-$(CONFIG_CPU_IDLE_GOV_MENU) += menu.o
+ obj-$(CONFIG_CPU_IDLE_GOV_TEO) += teo.o
+ obj-$(CONFIG_CPU_IDLE_GOV_HALTPOLL) += haltpoll.o
++obj-$(CONFIG_CPU_IDLE_GOV_NAP) += nap/
+diff --git a/drivers/cpuidle/governors/nap/Makefile b/drivers/cpuidle/governors/nap/Makefile
+new file mode 100644
+index 0000000000000000000000000000000000000000..666eeb47209fd4fb9317216d192aa670a7be6f56
+--- /dev/null
++++ b/drivers/cpuidle/governors/nap/Makefile
+@@ -0,0 +1,33 @@
++# SPDX-License-Identifier: GPL-2.0-only
++#
++# Makefile for the NAP cpuidle governor
++#
++
++obj-$(CONFIG_CPU_IDLE_GOV_NAP) += cpuidle_gov_nap.o
++
++cpuidle_gov_nap-y := nap.o nap_fpu.o nap_nn_sse2.o nap_nn_avx2.o
++
++# Kernel builds with -mno-sse -mno-sse2 -mno-avx -msoft-float -mno-80387
++# -mno-fp-ret-in-387.  FPU/SIMD-using files need these removed and ISA
++# flags explicitly added.
++#
++# CRITICAL: nap.o is intentionally compiled with NORMAL kernel flags
++# (no FPU/SSE).  All floating-point code lives in nap_fpu.o and the
++# nap_nn_*.o files.  This ensures the compiler cannot emit SSE instructions
++# in governor callbacks (nap_select, nap_reflect, etc.), which would
++# silently corrupt userspace FPU register state.
++#
++# Do NOT add CFLAGS_REMOVE/CFLAGS for nap.o — it must stay FPU-free.
++FPU_KILL_FLAGS := -mno-sse -mno-sse2 -mno-mmx -mno-avx -mno-3dnow \
++                  -mno-sse4a -msoft-float -mno-80387 -mno-fp-ret-in-387
++
++# LTO FIX: Disables LTO on standalone files to prevent intrusive inlining
++# of FPU instructions and ensure that flags are preserved during linking.
++CFLAGS_REMOVE_nap.o            += $(CC_FLAGS_LTO)
++CFLAGS_REMOVE_nap_fpu.o        += $(CC_FLAGS_LTO) $(FPU_KILL_FLAGS)
++CFLAGS_REMOVE_nap_nn_sse2.o    += $(CC_FLAGS_LTO) $(FPU_KILL_FLAGS)
++CFLAGS_REMOVE_nap_nn_avx2.o    += $(CC_FLAGS_LTO) $(FPU_KILL_FLAGS)
++
++CFLAGS_nap_fpu.o       += $(CC_FLAGS_FPU)
++CFLAGS_nap_nn_sse2.o   += $(CC_FLAGS_FPU)
++CFLAGS_nap_nn_avx2.o   += $(CC_FLAGS_FPU) -mavx -mavx2 -mfma
+diff --git a/drivers/cpuidle/governors/nap/nap.c b/drivers/cpuidle/governors/nap/nap.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..717706f1eb14145dae1ce5f6445c2097237957ef
+--- /dev/null
++++ b/drivers/cpuidle/governors/nap/nap.c
+@@ -0,0 +1,677 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * nap.c — Neural Adaptive Predictor cpuidle governor
++ *
++ * A machine-learning-based cpuidle governor that uses a small MLP (8→8→1)
++ * with 3 Mixture-of-Experts (short/long/deep) to predict a log2 correction
++ * factor for sleep_length.  State selection is deterministic threshold
++ * comparison.  Weights are Xavier-initialized at boot, then refined via
++ * online learning (deferred backpropagation with SGD).
++ *
++ * IMPORTANT: This file is compiled WITHOUT FPU/SSE flags (normal kernel
++ * compilation).  All floating-point and SIMD code lives in nap_fpu.c and
++ * nap_nn_{sse2,avx2}.c, which are compiled with CC_FLAGS_FPU.
++ * This separation ensures the compiler cannot emit SSE instructions in
++ * governor callbacks (nap_select, nap_reflect, etc.), which would corrupt
++ * userspace FPU register state.
++ */
++
++#include <linux/cpuidle.h>
++#include <linux/cpu.h>
++#include <linux/jump_label.h>
++#include <linux/kobject.h>
++#include <linux/math64.h>
++#include <linux/percpu.h>
++#include <linux/sched/clock.h>
++#include <linux/sysfs.h>
++#include <linux/string.h>
++#include <linux/tick.h>
++#include <asm/simd.h>
++#include <asm/fpu/api.h>
++#include <asm/processor.h>
++
++#include "nap.h"
++
++/**************************************************************
++ * Version Information:
++ */
++
++#define CPUIDLE_NAP_PROGNAME "Nap CPUIdle Governor"
++#define CPUIDLE_NAP_AUTHOR   "Masahito Suzuki"
++
++#define CPUIDLE_NAP_VERSION  "0.4.0"
++
++/* Governor defaults */
++#define NAP_DEFAULT_LR_MILLTHS    1     /* 0.001 = 1 millths */
++#define NAP_DEFAULT_INTERVAL      4     /* learn every 4 reflects */
++#define NAP_DEFAULT_CLAMP_MILLTHS 1000  /* 1.0 = 1000 millths */
++#define NAP_DEFAULT_PCTL_MILLTHS  100   /* 10th percentile */
++
++/* ================================================================
++ * ISA dispatch via static keys (definitions only; dispatch in nap_fpu.c)
++ * ================================================================
++ */
++
++DEFINE_STATIC_KEY_FALSE(nap_use_avx2);
++
++static void __init nap_detect_simd(void)
++{
++	if (boot_cpu_has(X86_FEATURE_FMA) &&
++	    boot_cpu_has(X86_FEATURE_AVX2)) {
++		static_branch_enable(&nap_use_avx2);
++		pr_info("nap: using AVX2+FMA\n");
++	} else {
++		pr_info("nap: using SSE2\n");
++	}
++}
++
++/* ================================================================
++ * Per-CPU data
++ * ================================================================
++ */
++
++DEFINE_PER_CPU(struct nap_cpu_data, nap_data);
++static struct cpuidle_driver *nap_cached_drv;
++
++/* ================================================================
++ * Reflect-time updates (integer-only, no FPU needed)
++ * ================================================================
++ */
++
++static void nap_history_update(struct nap_cpu_data *d, u64 measured_ns)
++{
++	d->history[d->hist_idx] = measured_ns;
++	d->hist_idx = (d->hist_idx + 1) % NAP_HISTORY_SIZE;
++	if (d->hist_count < NAP_HISTORY_SIZE)
++		d->hist_count++;
++
++}
++
++static void nap_update_external_signals(struct nap_cpu_data *d)
++{
++	d->prev_idle_exit = local_clock();
++}
++
++/* ================================================================
++ * Governor callbacks
++ * ================================================================
++ */
++
++/*
++ * Return the shallowest C-state index that is both enabled and
++ * satisfies the current latency request.  Returns 0 if no such
++ * state exists (caller must treat 0 as "POLL is the only option").
++ *
++ * Called from the short-circuit path to decide whether the predicted
++ * sleep length is worth entering any C-state at all.  Does not
++ * consult the NN.
++ */
++static int nap_find_min_valid_state(struct cpuidle_driver *drv,
++				    struct cpuidle_device *dev,
++				    s64 latency_req)
++{
++	int i;
++
++	for (i = 1; i < drv->state_count; i++) {
++		if (dev->states_usage[i].disable)
++			continue;
++		if (drv->states[i].exit_latency_ns > latency_req)
++			continue;
++		return i;
++	}
++	return 0;
++}
++
++/*
++ * Cached wrapper around nap_find_min_valid_state().
++ *
++ * Invalidation triggers:
++ *   1. latency_req changed since last cached value (immediate; PM QoS
++ *      updates propagate on the next nap_select call).
++ *   2. NAP_MIN_STATE_REFRESH_JIFFIES elapsed since last refresh
++ *      (bounded staleness for sysfs-driven or runtime-driver state
++ *      disable events, which are rare).
++ *
++ * Hot path cost when the cache is valid: ~5-7 cycles (one s64
++ * compare, one time_after() check, one conditional return).  The
++ * uncached loop runs at most once per HZ jiffies per CPU.
++ */
++static inline int nap_get_min_valid_state(struct nap_cpu_data *d,
++					   struct cpuidle_driver *drv,
++					   struct cpuidle_device *dev,
++					   s64 latency_req)
++{
++	if (unlikely(latency_req != d->cached_min_state_latency ||
++		     time_after(jiffies,
++				d->cached_min_state_jiffies +
++				NAP_MIN_STATE_REFRESH_JIFFIES))) {
++		d->cached_min_state = nap_find_min_valid_state(drv, dev,
++							       latency_req);
++		d->cached_min_state_latency = latency_req;
++		d->cached_min_state_jiffies = jiffies;
++	}
++	return d->cached_min_state;
++}
++
++/*
++ * Compute dev->poll_limit_ns for the short-circuit path.
++ *
++ * Budget = predicted wake time (sleep_length) + 1 µs safety margin.
++ * The margin absorbs timer jitter so a wake arriving slightly after
++ * the predicted time does not trigger a select/enter/reflect retry
++ * cycle.  It is consumed only when the wake is actually late; on-time
++ * and early wakes exit POLL via need_resched without touching the
++ * margin.
++ *
++ * Floor: NAP_POLL_LIMIT_MIN_NS (1 µs).  Below this, per-iteration
++ * governor overhead exceeds actual polling, and POLL's own timeout
++ * sampling granularity (~1.3 µs via POLL_IDLE_RELAX_COUNT cpu_relax
++ * iterations) makes smaller limits indistinguishable in practice.
++ *
++ * Ceiling: min_state.target_residency_ns.  Beyond that point, the
++ * C-state would have been a better choice than polling.
++ */
++static inline u64 nap_compute_poll_limit(u64 sleep_length_ns,
++					 u64 min_state_target_ns)
++{
++	u64 budget = sleep_length_ns + NAP_POLL_LIMIT_MARGIN_NS;
++
++	return clamp_t(u64, budget,
++		       NAP_POLL_LIMIT_MIN_NS,
++		       min_state_target_ns);
++}
++
++static int nap_fallback_heuristic(struct cpuidle_driver *drv,
++				  struct cpuidle_device *dev)
++{
++	s64 latency_req = cpuidle_governor_latency_req(dev->cpu);
++	ktime_t delta_tick;
++	u64 sleep_length_ns;
++	int i;
++
++	/* Expired timers must not become a large unsigned residency. */
++	sleep_length_ns = max_t(s64, 0,
++		ktime_to_ns(tick_nohz_get_sleep_length(&delta_tick)));
++
++	for (i = drv->state_count - 1; i > 0; i--) {
++		if (dev->states_usage[i].disable)
++			continue;
++		if (drv->states[i].exit_latency_ns > latency_req)
++			continue;
++		if (drv->states[i].target_residency_ns > sleep_length_ns)
++			continue;
++		return i;
++	}
++	return 0;
++}
++
++static int nap_select(struct cpuidle_driver *drv,
++		      struct cpuidle_device *dev,
++		      bool *stop_tick)
++{
++	struct nap_cpu_data *d = this_cpu_ptr(&nap_data);
++	s64 latency_req;
++	ktime_t delta_tick;
++	u64 sleep_length_ns;
++	int idx, min_state;
++
++	if (unlikely(drv->state_count <= 1))
++		return 0;
++
++	latency_req = cpuidle_governor_latency_req(dev->cpu);
++	/* Expired timers must not become a large unsigned residency. */
++	sleep_length_ns = max_t(s64, 0,
++		ktime_to_ns(tick_nohz_get_sleep_length(&delta_tick)));
++
++	min_state = nap_get_min_valid_state(d, drv, dev, latency_req);
++
++	/*
++	 * Fast path: when no C-state can amortize its target residency
++	 * within the predicted sleep length, the answer is deterministically
++	 * POLL.  Skip NN inference and feature extraction entirely.
++	 * nap_reflect also skips history update and learning for
++	 * short-circuited events (see the short_circuited check there).
++	 * See spec §3.1.
++	 */
++	if (min_state == 0 ||
++	    sleep_length_ns < drv->states[min_state].target_residency_ns) {
++
++		if (min_state > 0)
++			dev->poll_limit_ns = nap_compute_poll_limit(
++				sleep_length_ns,
++				drv->states[min_state].target_residency_ns);
++		else
++			dev->poll_limit_ns = max_t(u64, sleep_length_ns,
++						   NAP_POLL_LIMIT_MIN_NS);
++
++		*stop_tick = false;
++		d->last_selected_idx = 0;
++		d->short_circuited = true;
++		d->stats.total_selects++;
++		return 0;
++	}
++
++	/* Normal NN-driven path */
++	d->short_circuited = false;
++
++	if (likely(may_use_simd())) {
++		kernel_fpu_begin();
++		idx = nap_fpu_select(drv, dev, d);
++		kernel_fpu_end();
++
++		if (idx < 0)
++			idx = nap_fallback_heuristic(drv, dev);
++	} else {
++		idx = nap_fallback_heuristic(drv, dev);
++	}
++
++	*stop_tick = (drv->states[idx].target_residency_ns >
++		      TICK_NSEC);
++
++	d->last_selected_idx = idx;
++	d->stats.total_selects++;
++
++	return idx;
++}
++
++static void nap_reflect(struct cpuidle_device *dev, int index)
++{
++	struct nap_cpu_data *d = this_cpu_ptr(&nap_data);
++	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
++	u64 measured_ns = dev->last_residency_ns;
++
++	if (unlikely(!drv))
++		return;
++
++	/*
++	 * Short-circuited POLL: NN was not invoked for this idle
++	 * event, so the residency does not belong to the NN's
++	 * training distribution.  Update the aggregate residency
++	 * statistic and return — history, hit_intercept, prediction
++	 * error, external signals, and learning are all skipped.
++	 * See spec §3.4.
++	 */
++	if (d->short_circuited) {
++		d->stats.total_residency_ns += measured_ns;
++		return;
++	}
++
++	nap_history_update(d, measured_ns);
++
++	d->last_prediction_error = d->last_predicted_ns - (s64)measured_ns;
++	nap_update_external_signals(d);
++
++	/*
++	 * Dual gate: learn when both the per-N-reflect counter fires
++	 * AND at least learn_jiffies_min jiffies have elapsed since
++	 * the last learning step.  The time gate prevents sustained
++	 * weight churn on workloads with very rapid idle bursts; a
++	 * value of 0 disables it (restores the original counter-only
++	 * behavior).  See spec §3.5.
++	 */
++	if (++d->learn_counter >= d->learn_interval &&
++	    time_after_eq(jiffies,
++			  d->last_learn_jiffies + d->learn_jiffies_min)) {
++		d->learn_counter = 0;
++		d->last_learn_jiffies = jiffies;
++		d->learn_actual_ns = measured_ns;
++		d->needs_learn = true;
++	}
++
++	d->stats.total_residency_ns += measured_ns;
++	if (index > 0 && measured_ns < drv->states[index].target_residency_ns)
++		d->stats.overshoot_count++;
++}
++
++static int nap_enable(struct cpuidle_driver *drv,
++		      struct cpuidle_device *dev)
++{
++	struct nap_cpu_data *d = per_cpu_ptr(&nap_data, dev->cpu);
++
++	memset(d, 0, sizeof(*d));
++
++	/*
++	 * Force first-call refresh of the min-valid-state cache.
++	 * cached_min_state_latency = S64_MIN ensures the first
++	 * nap_select() comparison will always trip the invalidation
++	 * branch regardless of the actual latency_req value.
++	 * cached_min_state itself is already zeroed by the memset above.
++	 */
++	d->cached_min_state_latency = S64_MIN;
++	d->cached_min_state_jiffies = jiffies - NAP_MIN_STATE_REFRESH_JIFFIES;
++
++	/* Default: allow at most one learning step per jiffy */
++	d->learn_jiffies_min = 1;
++
++	/*
++	 * Defer weight initialization to the first nap_select() FPU path
++	 * via reset_pending.  nap_enable() is called from cpuidle core
++	 * (cpuidle_enable_device) which may run on a different CPU than
++	 * dev->cpu during governor switch.  Deferring ensures FPU init
++	 * happens on the correct CPU in its own idle context.
++	 */
++	WRITE_ONCE(nap_cached_drv, drv);
++	d->learning_rate_millths  = NAP_DEFAULT_LR_MILLTHS;
++	d->learn_interval = NAP_DEFAULT_INTERVAL;
++	d->max_grad_norm_millths  = NAP_DEFAULT_CLAMP_MILLTHS;
++	d->overshoot_pctl_millths = NAP_DEFAULT_PCTL_MILLTHS;
++	d->reset_pending = true;
++
++	return 0;
++}
++
++static void nap_disable(struct cpuidle_driver *drv,
++			struct cpuidle_device *dev)
++{
++	WRITE_ONCE(nap_cached_drv, NULL);
++}
++
++/* ================================================================
++ * sysfs interface  (/sys/devices/system/cpu/nap/)
++ * ================================================================
++ */
++
++static ssize_t stats_show(struct kobject *kobj,
++			  struct kobj_attribute *attr, char *buf)
++{
++	int cpu, len = 0;
++	u64 total_sel = 0, total_res = 0, total_under = 0, total_learn = 0;
++
++	for_each_online_cpu(cpu) {
++		struct nap_cpu_data *d = &per_cpu(nap_data, cpu);
++
++		total_sel   += d->stats.total_selects;
++		total_res   += d->stats.total_residency_ns;
++		total_under += d->stats.overshoot_count;
++		total_learn += d->stats.learn_count;
++	}
++
++	len += sysfs_emit_at(buf, len, "total_selects: %llu\n", total_sel);
++	len += sysfs_emit_at(buf, len, "total_residency_ms: %llu\n",
++			     div_u64(total_res, NSEC_PER_MSEC));
++	len += sysfs_emit_at(buf, len, "overshoot_count: %llu\n", total_under);
++	len += sysfs_emit_at(buf, len, "overshoot_rate_permil: %llu\n",
++			     total_sel ? div_u64(total_under * 1000, total_sel) : 0);
++	len += sysfs_emit_at(buf, len, "learn_count: %llu\n", total_learn);
++	return len;
++}
++
++static ssize_t learning_rate_show(struct kobject *kobj,
++				  struct kobj_attribute *attr, char *buf)
++{
++	int cpu;
++
++	cpu = cpumask_first(cpu_online_mask);
++	if (cpu >= nr_cpu_ids)
++		return sysfs_emit(buf, "0\n");
++	return sysfs_emit(buf, "%u\n",
++			  per_cpu(nap_data, cpu).learning_rate_millths);
++}
++
++static ssize_t learning_rate_store(struct kobject *kobj,
++				   struct kobj_attribute *attr,
++				   const char *buf, size_t count)
++{
++	unsigned int val;
++	int cpu;
++
++	if (kstrtouint(buf, 10, &val) || val == 0 || val > 100)
++		return -EINVAL;
++
++	for_each_online_cpu(cpu)
++		per_cpu(nap_data, cpu).learning_rate_millths = val;
++
++	return count;
++}
++
++static ssize_t learn_interval_show(struct kobject *kobj,
++				   struct kobj_attribute *attr, char *buf)
++{
++	int cpu;
++
++	cpu = cpumask_first(cpu_online_mask);
++	if (cpu >= nr_cpu_ids)
++		return sysfs_emit(buf, "0\n");
++	return sysfs_emit(buf, "%d\n",
++			  per_cpu(nap_data, cpu).learn_interval);
++}
++
++static ssize_t learn_interval_store(struct kobject *kobj,
++				    struct kobj_attribute *attr,
++				    const char *buf, size_t count)
++{
++	unsigned int val;
++	int cpu;
++
++	if (kstrtouint(buf, 10, &val) || val == 0 || val > 10000)
++		return -EINVAL;
++
++	for_each_online_cpu(cpu)
++		per_cpu(nap_data, cpu).learn_interval = val;
++
++	return count;
++}
++
++static ssize_t learn_jiffies_min_show(struct kobject *kobj,
++				      struct kobj_attribute *attr, char *buf)
++{
++	int cpu;
++
++	cpu = cpumask_first(cpu_online_mask);
++	if (cpu >= nr_cpu_ids)
++		return sysfs_emit(buf, "0\n");
++	return sysfs_emit(buf, "%u\n",
++			  per_cpu(nap_data, cpu).learn_jiffies_min);
++}
++
++static ssize_t learn_jiffies_min_store(struct kobject *kobj,
++				       struct kobj_attribute *attr,
++				       const char *buf, size_t count)
++{
++	unsigned int val;
++	int cpu;
++
++	if (kstrtouint(buf, 10, &val) || val > HZ * 3600)
++		return -EINVAL;
++
++	for_each_online_cpu(cpu)
++		per_cpu(nap_data, cpu).learn_jiffies_min = val;
++
++	return count;
++}
++
++static ssize_t reset_weights_store(struct kobject *kobj,
++				   struct kobj_attribute *attr,
++				   const char *buf, size_t count)
++{
++	cpumask_var_t mask;
++	int cpu;
++
++	if (!READ_ONCE(nap_cached_drv))
++		return -ENODEV;
++
++	/*
++	 * Set a per-CPU flag; each CPU will reinitialize its own weights
++	 * inside nap_select() within its own kernel_fpu_begin/end context.
++	 * This avoids cross-CPU data races on the weight arrays.
++	 *
++	 * Accepts "all" to reset every online CPU, or a cpulist
++	 * (e.g. "0-3,5,7") to reset specific CPUs.
++	 */
++	if (sysfs_streq(buf, "all")) {
++		for_each_online_cpu(cpu)
++			per_cpu(nap_data, cpu).reset_pending = true;
++		pr_info("nap: weight reset scheduled for all CPUs\n");
++		return count;
++	}
++
++	if (!alloc_cpumask_var(&mask, GFP_KERNEL))
++		return -ENOMEM;
++
++	if (cpulist_parse(buf, mask)) {
++		free_cpumask_var(mask);
++		return -EINVAL;
++	}
++
++	for_each_cpu_and(cpu, mask, cpu_online_mask)
++		per_cpu(nap_data, cpu).reset_pending = true;
++
++	pr_info("nap: weight reset scheduled for CPUs %*pbl\n",
++		cpumask_pr_args(mask));
++	free_cpumask_var(mask);
++	return count;
++}
++
++static ssize_t reset_stats_store(struct kobject *kobj,
++				 struct kobj_attribute *attr,
++				 const char *buf, size_t count)
++{
++	int cpu;
++
++	for_each_online_cpu(cpu)
++		memset(&per_cpu(nap_data, cpu).stats, 0,
++		       sizeof(struct nap_stats));
++
++	return count;
++}
++
++static ssize_t overshoot_pctl_show(struct kobject *kobj,
++				    struct kobj_attribute *attr, char *buf)
++{
++	int cpu;
++
++	cpu = cpumask_first(cpu_online_mask);
++	if (cpu >= nr_cpu_ids)
++		return sysfs_emit(buf, "0\n");
++	return sysfs_emit(buf, "%u\n",
++			  per_cpu(nap_data, cpu).overshoot_pctl_millths);
++}
++
++static ssize_t overshoot_pctl_store(struct kobject *kobj,
++				     struct kobj_attribute *attr,
++				     const char *buf, size_t count)
++{
++	unsigned int val;
++	int cpu;
++
++	if (kstrtouint(buf, 10, &val) || val > 500)
++		return -EINVAL;
++
++	for_each_online_cpu(cpu)
++		per_cpu(nap_data, cpu).overshoot_pctl_millths = val;
++
++	return count;
++}
++
++static ssize_t version_show(struct kobject *kobj,
++			    struct kobj_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "%s\n", CPUIDLE_NAP_VERSION);
++}
++
++static ssize_t simd_show(struct kobject *kobj,
++			 struct kobj_attribute *attr, char *buf)
++{
++	if (static_branch_unlikely(&nap_use_avx2))
++		return sysfs_emit(buf, "avx2\n");
++	else
++		return sysfs_emit(buf, "sse2\n");
++}
++
++static struct kobj_attribute version_attr           = __ATTR_RO(version);
++static struct kobj_attribute simd_attr              = __ATTR_RO(simd);
++static struct kobj_attribute stats_attr             = __ATTR_RO(stats);
++static struct kobj_attribute learning_rate_attr     = __ATTR_RW(learning_rate);
++static struct kobj_attribute learn_interval_attr    = __ATTR_RW(learn_interval);
++static struct kobj_attribute learn_jiffies_min_attr = __ATTR_RW(learn_jiffies_min);
++static struct kobj_attribute overshoot_pctl_attr    = __ATTR_RW(overshoot_pctl);
++static struct kobj_attribute reset_weights_attr     = __ATTR_WO(reset_weights);
++static struct kobj_attribute reset_stats_attr       = __ATTR_WO(reset_stats);
++
++static struct attribute *nap_attrs[] = {
++	&version_attr.attr,
++	&simd_attr.attr,
++	&stats_attr.attr,
++	&learning_rate_attr.attr,
++	&learn_interval_attr.attr,
++	&learn_jiffies_min_attr.attr,
++	&overshoot_pctl_attr.attr,
++	&reset_weights_attr.attr,
++	&reset_stats_attr.attr,
++	NULL,
++};
++
++static const struct attribute_group nap_attr_group = {
++	.attrs = nap_attrs,
++};
++
++static struct kobject *cpuidle_kobj;
++
++int nap_sysfs_init(void)
++{
++	struct device *dev_root;
++	int ret;
++
++	dev_root = bus_get_dev_root(&cpu_subsys);
++	if (!dev_root)
++		return -ENODEV;
++
++	cpuidle_kobj = kobject_create_and_add("nap", &dev_root->kobj);
++	put_device(dev_root);
++	if (!cpuidle_kobj)
++		return -ENOMEM;
++
++	ret = sysfs_create_group(cpuidle_kobj, &nap_attr_group);
++	if (ret) {
++		kobject_put(cpuidle_kobj);
++		cpuidle_kobj = NULL;
++	}
++	return ret;
++}
++
++void nap_sysfs_exit(void)
++{
++	if (cpuidle_kobj) {
++		sysfs_remove_group(cpuidle_kobj, &nap_attr_group);
++		kobject_put(cpuidle_kobj);
++		cpuidle_kobj = NULL;
++	}
++}
++
++/* ================================================================
++ * Governor registration
++ * ================================================================
++ */
++
++static struct cpuidle_governor nap_governor = {
++	.name    = "nap",
++	.rating  = 1,
++	.enable  = nap_enable,
++	.disable = nap_disable,
++	.select  = nap_select,
++	.reflect = nap_reflect,
++};
++
++static int __init nap_init(void)
++{
++	int ret;
++
++	nap_detect_simd();
++
++	ret = nap_sysfs_init();
++	if (ret)
++		pr_warn("nap: sysfs init failed: %d (continuing without sysfs)\n", ret);
++
++	ret = cpuidle_register_governor(&nap_governor);
++	if (ret) {
++		pr_err("nap: register_governor failed: %d\n", ret);
++		nap_sysfs_exit();
++		return ret;
++	}
++
++	pr_info("%s v%s by %s registered (rating=%u)\n",
++	       CPUIDLE_NAP_PROGNAME, CPUIDLE_NAP_VERSION,
++	       CPUIDLE_NAP_AUTHOR, nap_governor.rating);
++	return 0;
++}
++postcore_initcall(nap_init);
+diff --git a/drivers/cpuidle/governors/nap/nap.h b/drivers/cpuidle/governors/nap/nap.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..b504b119670a5e1a76f1487e80e82e73454c6718
+--- /dev/null
++++ b/drivers/cpuidle/governors/nap/nap.h
+@@ -0,0 +1,292 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef NAP_H
++#define NAP_H
++
++#include <linux/cpuidle.h>
++#include <linux/jump_label.h>
++#include <linux/ktime.h>
++#include <linux/percpu.h>
++
++/* ================================================================
++ * Neural network dimensions
++ * ================================================================
++ */
++
++#define NAP_INPUT_SIZE    8
++#define NAP_HIDDEN_SIZE   8
++#define NAP_NUM_EXPERTS   3
++
++/*
++ * Neural network weight structure for an 8→8→1 MLP (scalar regression).
++ *
++ * The NN outputs a single log2 correction factor applied to sleep_length:
++ *   effective_sleep = exp2(log2(sleep_length) + nn_output)
++ * State selection is then deterministic: pick the deepest state whose
++ * cost (target_residency + exit_latency) ≤ effective_sleep.
++ *
++ * Column-major storage: w_h1[j][i] = weight from input j to hidden neuron i.
++ * This layout enables efficient column-wise matrix-vector products where
++ * each input broadcasts across all hidden neurons via SIMD FMA.
++ *
++ * __aligned(32) ensures AVX2 vmovaps (32-byte aligned) loads work
++ * correctly.  8 floats = 32 bytes = one ymm register.
++ */
++struct nap_weights {
++	/* Hidden layer: input[8] → hidden[8] */
++	float w_h1[NAP_INPUT_SIZE][NAP_HIDDEN_SIZE];  /* 64 params */
++	float b_h1[NAP_HIDDEN_SIZE];                   /* 8 params  */
++	/* Output layer: hidden[8] → 1 scalar */
++	float w_out[NAP_HIDDEN_SIZE];                  /* 8 params  */
++	float b_out;                                   /* 1 param   */
++} __aligned(32);
++
++/* ISA-specific forward pass implementations */
++void nap_nn_forward_sse2(const float *input, float *output,
++			 float *hidden_save, const struct nap_weights *w);
++void nap_nn_forward_avx2(const float *input, float *output,
++			 float *hidden_save, const struct nap_weights *w);
++/* ISA-specific online learning (backpropagation) */
++struct nap_cpu_data;
++void nap_nn_learn_sse2(struct nap_cpu_data *d);
++void nap_nn_learn_avx2(struct nap_cpu_data *d);
++
++/* Static key for ISA dispatch (defined in nap.c) */
++DECLARE_STATIC_KEY_FALSE(nap_use_avx2);
++
++/* ================================================================
++ * SIMD type definitions and helpers (GCC vector extensions)
++ *
++ * Only available when compiled with FPU/SSE flags (nap_fpu.c,
++ * nap_nn_*.c).  nap.c is compiled without FPU flags and must
++ * not see these definitions.
++ *
++ * <immintrin.h> is a userspace header and cannot be used in kernel.
++ * We use __attribute__((__vector_size__())) and __builtin_ia32_*.
++ * ================================================================
++ */
++
++#ifdef __SSE2__
++
++typedef float v4sf  __attribute__((__vector_size__(16)));   /* xmm: 4×float  */
++typedef int   v4si  __attribute__((__vector_size__(16)));   /* xmm: 4×int32  */
++typedef float v8sf  __attribute__((__vector_size__(32)));   /* ymm: 8×float  */
++
++/* Broadcast helpers */
++#define V4SF_SET1(x)  ((v4sf) { (x), (x), (x), (x) })
++#define V4SI_SET1(x)  ((v4si) { (x), (x), (x), (x) })
++#define V8SF_SET1(x)  ((v8sf) { (x), (x), (x), (x), (x), (x), (x), (x) })
++#define V8SF_ZERO     V8SF_SET1(0.0f)
++
++/* Unaligned load/store helpers */
++static inline v4sf v4sf_loadu(const float *p)
++{
++	v4sf result;
++
++	__builtin_memcpy(&result, p, sizeof(result));
++	return result;
++}
++
++static inline void v4sf_storeu(float *p, v4sf v)
++{
++	__builtin_memcpy(p, &v, sizeof(v));
++}
++
++#ifdef __AVX__
++static inline v8sf v8sf_loadu(const float *p)
++{
++	v8sf result;
++
++	__builtin_memcpy(&result, p, sizeof(result));
++	return result;
++}
++
++static inline void v8sf_storeu(float *p, v8sf v)
++{
++	__builtin_memcpy(p, &v, sizeof(v));
++}
++#endif /* __AVX__ */
++
++/* Scalar/vector clamp helpers */
++static inline float fclampf(float v, float lo, float hi)
++{
++	if (v < lo)
++		return lo;
++	if (v > hi)
++		return hi;
++	return v;
++}
++
++static inline v4sf v4sf_clamp(v4sf v, v4sf lo, v4sf hi)
++{
++	return __builtin_ia32_maxps(__builtin_ia32_minps(v, hi), lo);
++}
++
++/* Type punning: float ↔ int reinterpret (no instruction generated) */
++static inline v4si v4sf_as_v4si(v4sf v)
++{
++	union { v4sf f; v4si i; } u = { .f = v };
++	return u.i;
++}
++
++static inline v4sf v4si_as_v4sf(v4si v)
++{
++	union { v4si i; v4sf f; } u = { .i = v };
++	return u.f;
++}
++
++/*
++ * fast_log2f_sse() — Compute log2 of 4 floats simultaneously using SSE2
++ *
++ * Cost: ~15 cycles for 4 values (~4 cycles per value)
++ */
++static inline v4sf fast_log2f_sse(v4sf x)
++{
++	const v4si mask_exp  = V4SI_SET1(0xFF);
++	const v4si bias      = V4SI_SET1(127);
++	const v4si mask_mant = V4SI_SET1(0x7FFFFF);
++	const v4si exp_bias  = V4SI_SET1(127 << 23);
++
++	v4si xi    = v4sf_as_v4si(x);
++	v4si exp_i = ((xi >> 23) & mask_exp) - bias;
++	v4sf e     = __builtin_convertvector(exp_i, v4sf);
++
++	v4si mant_i = (xi & mask_mant) | exp_bias;
++	v4sf m      = v4si_as_v4sf(mant_i) - V4SF_SET1(1.0f);
++
++	v4sf p;
++
++	p = m * V4SF_SET1(0.4808f);
++	p = V4SF_SET1(0.7213f) - p;
++	p = m * p;
++	p = V4SF_SET1(1.4425f) - p;
++	p = m * p;
++
++	return e + p;
++}
++
++#endif /* __SSE2__ */
++
++/* ================================================================
++ * Feature extraction
++ * ================================================================
++ */
++
++#define NAP_HISTORY_SIZE     8
++
++/* ================================================================
++ * POLL short-circuit tunables
++ * ================================================================
++ */
++
++/* Minimum and safety-margin values for dev->poll_limit_ns written
++ * by nap_compute_poll_limit().  Both are 1 µs: the POLL state
++ * itself checks its timeout only every ~1 µs (POLL_IDLE_RELAX_COUNT
++ * cpu_relax() iterations in drivers/cpuidle/poll_state.c), so
++ * finer-grained values would not produce distinguishable behavior.
++ */
++#define NAP_POLL_LIMIT_MIN_NS      1000ULL
++#define NAP_POLL_LIMIT_MARGIN_NS   1000ULL
++
++/* Refresh interval for the cached minimum-valid-state lookup.
++ * HZ jiffies (= 1 second) bounds the staleness window caused by
++ * sysfs-driven or runtime-driver state disable events.  PM QoS
++ * latency changes are detected immediately via the cached
++ * latency_req comparison.
++ */
++#define NAP_MIN_STATE_REFRESH_JIFFIES  HZ
++
++struct nap_stats {
++	u64 total_selects;
++	u64 total_residency_ns;
++	u64 overshoot_count;
++	u64 learn_count;
++};
++
++struct nap_cpu_data {
++	/* Ring buffer */
++	u64   history[NAP_HISTORY_SIZE];
++	float log_history[NAP_HISTORY_SIZE];
++	int   hist_idx;
++	int   hist_count;
++
++	/* External signal tracking */
++	u64     prev_idle_exit;
++	s64     last_predicted_ns;
++	s64     last_prediction_error;
++
++	/* Short-circuit fast path (§3.1, §3.2, §3.4 of spec) */
++	bool short_circuited;			/* set in select, read in reflect */
++	int  cached_min_state;			/* cached shallowest valid state */
++	s64  cached_min_state_latency;		/* latency_req when cache populated */
++	unsigned long cached_min_state_jiffies;	/* jiffies when cache populated */
++
++	/* Jiffies-based learning rate floor (§3.5 of spec) */
++	unsigned long last_learn_jiffies;
++	unsigned int  learn_jiffies_min;	/* sysfs-tunable, 0 = disabled */
++
++	/* select/reflect handoff */
++	int   last_selected_idx;
++
++	/* NN scalar output: log2 correction factor for sleep_length.
++	 * effective_sleep = exp2(log2(sleep_length) + nn_output).
++	 */
++	float nn_output;
++
++	/*
++	 * hidden_out[], features_f32[] are written with aligned SIMD
++	 * stores in nap_nn_forward_{sse2,avx2}() and
++	 * nap_extract_features():
++	 *   SSE2:    movaps  (16-byte aligned)
++	 *   AVX2:    vmovaps (32-byte aligned)
++	 * Without __aligned(64), the natural struct offset would be
++	 * only 4-byte aligned, causing #GP faults in the idle task.
++	 */
++	float hidden_out[NAP_HIDDEN_SIZE] __aligned(32);
++	float features_f32[NAP_INPUT_SIZE] __aligned(32);
++
++	/* Backprop scratch */
++	float learn_d_out;	/* output gradient direction (±1) */
++	float learn_lr;		/* effective lr (base_lr * asymmetric weight) */
++	float learn_d_hid[NAP_HIDDEN_SIZE] __aligned(32);
++
++	/* Precomputed per-state log2(target_residency) for threshold selection.
++	 * log2_cost[i] = log2(target_residency_ns).
++	 */
++	float log2_cost[CPUIDLE_STATE_MAX];
++
++	/* Deferred learning data */
++	bool  needs_learn;
++	bool  output_clamped;	/* true if nn_output was clamped to features[0] */
++	u64   learn_actual_ns;
++
++	/* Mixture-of-Experts: 3 experts × 8 neurons each */
++	struct nap_weights expert_weights[NAP_NUM_EXPERTS];
++	struct nap_weights *active_w;	/* selected expert for current/deferred pass */
++	int   active_expert;		/* 0, 1, or 2: which expert is active */
++	float expert_mid;		/* log2 threshold: short ↔ long */
++	float expert_deep;		/* log2 threshold: long ↔ deep */
++
++	/* Online learning */
++	unsigned int learning_rate_millths;
++	unsigned int max_grad_norm_millths;
++	unsigned int overshoot_pctl_millths; /* quantile target (250 = 25th pctl) */
++	int   learn_interval;
++	int   learn_counter;
++	bool reset_pending;		/* set by sysfs, consumed by nap_select */
++
++	/* sysfs statistics */
++	struct nap_stats stats;
++};
++
++DECLARE_PER_CPU(struct nap_cpu_data, nap_data);
++
++/* FPU entry point (nap_fpu.c) — call only within kernel_fpu_begin/end */
++int nap_fpu_select(struct cpuidle_driver *drv,
++		   struct cpuidle_device *dev,
++		   struct nap_cpu_data *d);
++
++/* sysfs interface */
++int  nap_sysfs_init(void);
++void nap_sysfs_exit(void);
++
++#endif /* NAP_H */
+diff --git a/drivers/cpuidle/governors/nap/nap_fpu.c b/drivers/cpuidle/governors/nap/nap_fpu.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..a687347c8879a0dd9c9a5e1644e7f42e67e1c67b
+--- /dev/null
++++ b/drivers/cpuidle/governors/nap/nap_fpu.c
+@@ -0,0 +1,580 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * nap_fpu.c — FPU/SIMD code for the NAP cpuidle governor
++ *
++ * This file is compiled with FPU/SSE flags enabled (CC_FLAGS_FPU).
++ * ALL functions here MUST be called only from within
++ * kernel_fpu_begin()/kernel_fpu_end() blocks.
++ *
++ * Keeping FPU code in a separate translation unit ensures the compiler
++ * cannot emit SSE/x87 instructions in non-FPU code paths (nap.c),
++ * which would silently corrupt userspace FPU register state.
++ */
++
++#include <linux/cpuidle.h>
++#include <linux/math64.h>
++#include <linux/percpu.h>
++#include <linux/pm_qos.h>
++#include <linux/sched/clock.h>
++#include <linux/string.h>
++#include <linux/tick.h>
++
++#include "nap.h"
++
++/* Clang lacks __builtin_ia32_movhlps; emulate with __builtin_shufflevector */
++#ifdef __clang__
++#define __builtin_ia32_movhlps(a, b) \
++	__builtin_shufflevector(b, a, 2, 3, 6, 7)
++#endif
++
++/* ================================================================
++ * Float math helpers
++ * ================================================================
++ */
++
++static inline float float_min(float a, float b) { return a < b ? a : b; }
++static inline float float_max(float a, float b) { return a > b ? a : b; }
++
++/*
++ * Kernel-safe sqrtf using the SSE sqrtss instruction directly.
++ * GCC may lower nap_sqrtf to a libm call, which is unavailable
++ * in the kernel.  This file is always compiled with FPU/SSE enabled.
++ */
++static inline float nap_sqrtf(float x)
++{
++	asm("sqrtss %1, %0" : "=x"(x) : "x"(x));
++	return x;
++}
++
++/* Scalar log2 approximation (same algorithm as fast_log2f_sse) */
++static inline float fast_log2f(float x)
++{
++	union { float f; u32 i; } u = { .f = x };
++	int exp = (int)((u.i >> 23) & 0xFFu) - 127;
++	float e = (float)exp;
++	float m, p;
++
++	u.i = (u.i & 0x7FFFFFu) | (127u << 23);
++	m = u.f - 1.0f;
++
++	p = m * 0.4808f;
++	p = 0.7213f - p;
++	p = m * p;
++	p = 1.4425f - p;
++	p = m * p;
++
++	return e + p;
++}
++
++/* ================================================================
++ * Deterministic PRNG for weight initialization (LCG)
++ * ================================================================
++ */
++
++static inline float nap_prng_float(u32 *state)
++{
++	*state = *state * 1664525u + 1013904223u;
++	return (float)(s32)*state * (1.0f / 2147483648.0f);
++}
++
++/* ================================================================
++ * ISA dispatch via static keys
++ * ================================================================
++ */
++
++static inline void nap_nn_forward(const float *input, float *output,
++				  float *hidden_save,
++				  const struct nap_weights *w)
++{
++	if (static_branch_unlikely(&nap_use_avx2))
++		nap_nn_forward_avx2(input, output, hidden_save, w);
++	else
++		nap_nn_forward_sse2(input, output, hidden_save, w);
++}
++
++static inline void nap_nn_learn(struct nap_cpu_data *d)
++{
++	if (static_branch_unlikely(&nap_use_avx2))
++		nap_nn_learn_avx2(d);
++	else
++		nap_nn_learn_sse2(d);
++}
++
++/* ================================================================
++ * Weight initialization
++ *
++ * The NN directly outputs predicted sleep time in log2(ns) space.
++ * Hidden neuron 0 is initialized as a pass-through for feature[0]
++ * (log2(sleep_length)), so the initial output ≈ log2(sleep_length).
++ * This matches the pre-learning behavior of selecting the deepest
++ * state that fits within sleep_length.
++ *
++ * Other hidden neurons are Xavier-initialized with near-zero output
++ * weights so their initial contribution is negligible.  Biases = 0.
++ * ================================================================
++ */
++
++#define NAP_PRNG_SEED 42u
++
++static void nap_init_weights(struct nap_weights *w)
++{
++	u32 rng = NAP_PRNG_SEED;
++	float scale_h1, scale_out;
++	int i, j;
++
++	/* Xavier uniform: U(-sqrt(6/(fan_in+fan_out)), +sqrt(6/(...))) */
++	scale_h1  = nap_sqrtf(6.0f / (float)(NAP_INPUT_SIZE + NAP_HIDDEN_SIZE));
++	scale_out = 0.01f;
++
++	/* Hidden layer weights */
++	for (i = 0; i < NAP_INPUT_SIZE; i++)
++		for (j = 0; j < NAP_HIDDEN_SIZE; j++)
++			w->w_h1[i][j] = nap_prng_float(&rng) * scale_h1;
++
++	/* Hidden biases: zero (standard) */
++	memset(w->b_h1, 0, sizeof(w->b_h1));
++
++	/* Output weights: near-zero for ~0 initial contribution */
++	for (j = 0; j < NAP_HIDDEN_SIZE; j++)
++		w->w_out[j] = nap_prng_float(&rng) * scale_out;
++
++	/* Output bias: zero */
++	w->b_out = 0.0f;
++
++	/*
++	 * Neuron 0: pass-through for feature[0] = log2(sleep_length).
++	 * hidden[0] = ReLU(1.0 * input[0] + 0) = input[0]  (always > 0)
++	 * output += 1.0 * hidden[0] = log2(sleep_length)
++	 *
++	 * Override the random init above so initial output ≈ input[0].
++	 */
++	for (i = 0; i < NAP_INPUT_SIZE; i++)
++		w->w_h1[i][0] = 0.0f;
++	w->w_h1[0][0] = 1.0f;
++	w->b_h1[0] = 0.0f;
++	w->w_out[0] = 1.0f;
++}
++
++/*
++ * Precompute log2(target_residency) per state for threshold-based selection.
++ *
++ * Used in the selection loop: pick deepest state where
++ * log2_cost[i] <= nn_output (predicted sleep time in log2 space).
++ *
++ * Only target_residency_ns is used — exit_latency is a wakeup cost,
++ * not a factor in whether the CPU can profitably stay in the state
++ * for the predicted duration.
++ */
++static void nap_init_log2_cost(struct nap_cpu_data *d,
++			       struct cpuidle_driver *drv)
++{
++	float log2_tick;
++	int long_start, deep_idx;
++	int i;
++
++	for (i = 0; i < drv->state_count; i++) {
++		float res = float_max(
++			(float)drv->states[i].target_residency_ns, 1.0f);
++		d->log2_cost[i] = fast_log2f(res);
++	}
++
++	/*
++	 * MoE expert boundaries — 3-way split.
++	 *
++	 * Expert 0 (short): tick-bound idles where measured residency
++	 *   is dominated by the next tick rather than the workload's
++	 *   true idle duration.  Boundary: log2(TICK_NSEC).
++	 *
++	 * Expert 1 (long): nohz idles in intermediate C-states.
++	 *
++	 * Expert 2 (deep): idles targeting the deepest C-state.
++	 *   The deepest state often has qualitatively different
++	 *   residency characteristics (package C-state, longer
++	 *   exit latency, power-gated domains) that warrant a
++	 *   dedicated expert to avoid gradient interference with
++	 *   intermediate states.
++	 *
++	 * Safety: with only 2 C-states (+ POLL), expert_deep is
++	 * placed equal to expert_mid so the deep expert is never
++	 * routed (same behavior as the old 2-expert split).
++	 */
++	if (drv->state_count <= 1) {
++		d->expert_mid = 0.0f;
++		d->expert_deep = 0.0f;
++		return;
++	}
++
++	log2_tick = fast_log2f((float)TICK_NSEC);
++
++	/* Default: deepest state belongs to long expert (safety) */
++	long_start = drv->state_count - 1;
++
++	/* Prefer the first state whose target_residency exceeds one jiffy */
++	for (i = 1; i < drv->state_count; i++) {
++		if (d->log2_cost[i] > log2_tick) {
++			long_start = i;
++			break;
++		}
++	}
++
++	if (long_start > 1) {
++		/* Normal case: boundary between last short and first long */
++		d->expert_mid = (d->log2_cost[long_start - 1] +
++				 d->log2_cost[long_start]) / 2.0f;
++	} else {
++		/*
++		 * long_start == 1: even the shallowest C-state already
++		 * exceeds one jiffy.  All NN-handled idles go to the
++		 * long expert; place the boundary just below C1's
++		 * residency so the short expert remains routable but
++		 * unused.
++		 */
++		d->expert_mid = d->log2_cost[1] - 1.0f;
++	}
++
++	/*
++	 * Deep expert boundary — deepest C-state split.
++	 *
++	 * When there are >= 3 C-states (state_count >= 4, counting POLL),
++	 * place the boundary at the midpoint between the second-deepest
++	 * and deepest state's log2(target_residency).  The deep expert
++	 * then exclusively handles sleep durations long enough to reach
++	 * the deepest state.
++	 *
++	 * With only 2 C-states, expert_deep == expert_mid collapses to
++	 * the 2-expert regime (expert 2 is never selected).
++	 */
++	deep_idx = drv->state_count - 1;
++	if (deep_idx >= 3) {
++		/* >= 3 C-states: split before the deepest */
++		d->expert_deep = (d->log2_cost[deep_idx - 1] +
++				  d->log2_cost[deep_idx]) / 2.0f;
++		/* Ensure deep > mid ordering */
++		if (d->expert_deep <= d->expert_mid)
++			d->expert_deep = d->expert_mid;
++	} else {
++		/* <= 2 C-states: collapse deep into long */
++		d->expert_deep = d->expert_mid;
++	}
++}
++
++/* ================================================================
++ * Feature extraction helpers
++ * ================================================================
++ */
++
++struct logring_stats {
++	float avg;
++	float min;
++	float max;
++};
++
++/*
++ * Compute log_history statistics: avg, min, max.
++ * SIMD fast path when the ring buffer is full (8 elements = 2 × xmm).
++ */
++static void logring_compute(const struct nap_cpu_data *d,
++			    struct logring_stats *s)
++{
++	int i, n = d->hist_count;
++	float sum;
++
++	if (n == 0) {
++		*s = (struct logring_stats){ 0 };
++		return;
++	}
++
++	if (n == NAP_HISTORY_SIZE) {
++		v4sf v0 = *(const v4sf *)&d->log_history[0];
++		v4sf v1 = *(const v4sf *)&d->log_history[4];
++		v4sf pmin, pmax, psum, t;
++
++		pmin = __builtin_ia32_minps(v0, v1);
++		pmax = __builtin_ia32_maxps(v0, v1);
++		psum = v0 + v1;
++
++		/* 4 → 2 */
++		t = __builtin_ia32_movhlps(pmin, pmin);
++		pmin = __builtin_ia32_minps(pmin, t);
++		t = __builtin_ia32_movhlps(pmax, pmax);
++		pmax = __builtin_ia32_maxps(pmax, t);
++		t = __builtin_ia32_movhlps(psum, psum);
++		psum = psum + t;
++
++		/* 2 → 1 */
++		t = __builtin_ia32_shufps(pmin, pmin, 0x55);
++		pmin = __builtin_ia32_minps(pmin, t);
++		t = __builtin_ia32_shufps(pmax, pmax, 0x55);
++		pmax = __builtin_ia32_maxps(pmax, t);
++		t = __builtin_ia32_shufps(psum, psum, 0x55);
++		psum = psum + t;
++
++		sum = psum[0];
++		s->min = pmin[0];
++		s->max = pmax[0];
++	} else {
++		float val;
++
++		sum = d->log_history[0];
++		s->min = sum;
++		s->max = sum;
++
++		for (i = 1; i < n; i++) {
++			val = d->log_history[i];
++			sum += val;
++			s->min = float_min(s->min, val);
++			s->max = float_max(s->max, val);
++		}
++	}
++
++	s->avg = sum / (float)n;
++}
++
++/*
++ * Extract 8 input features for the MLP.
++ *
++ *   [0] log2(sleep_length)           — next timer event
++ *   [1] log2(last_residency)         — actual duration of last idle
++ *   [2] log_hist avg                 — average recent idle duration
++ *   [3] log_hist min                 — shortest recent idle
++ *   [4] log_hist max                 — longest recent idle
++ *   [5] signed log2(|pred_error|+1)  — prediction feedback
++ *   [6] log2(busy_ns)               — pre-idle busy duration
++ *   [7] log2(lat_req) - log2(deepest_lat) — PM QoS headroom
++ */
++static void nap_extract_features(struct cpuidle_driver *drv,
++				 struct cpuidle_device *dev,
++				 float out[NAP_INPUT_SIZE],
++				 s64 latency_req)
++{
++	struct nap_cpu_data *d = this_cpu_ptr(&nap_data);
++	struct logring_stats lr;
++	ktime_t sleep_length, delta_tick;
++	u64 busy_ns;
++	float log_inputs[4] __aligned(16);
++	float log_results[4] __aligned(16);
++
++	sleep_length = max_t(s64, 0,
++		tick_nohz_get_sleep_length(&delta_tick));
++	busy_ns = local_clock() - d->prev_idle_exit;
++
++	/*
++	 * SSE log2 batch: 4 values in one fast_log2f_sse call.
++	 *   [0] sleep_length   → out[0]
++	 *   [1] last_residency → out[1], also stored to log_history
++	 *   [2] busy_ns        → out[6]
++	 *   [3] |pred_error_us| + 1 → out[5] (sign restored after)
++	 */
++	{
++		float err_f = (float)(d->last_prediction_error / 1000);
++		float abs_err = (err_f >= 0.0f) ? err_f : -err_f;
++
++		log_inputs[0] = float_max((float)ktime_to_ns(sleep_length), 1.0f);
++		log_inputs[1] = float_max((float)dev->last_residency_ns, 1.0f);
++		log_inputs[2] = float_max((float)busy_ns, 1.0f);
++		log_inputs[3] = abs_err + 1.0f;
++
++		{
++			v4sf log_in  = *(const v4sf *)log_inputs;
++			v4sf log_out = fast_log2f_sse(log_in);
++			*(v4sf *)log_results = log_out;
++		}
++
++		out[0] = log_results[0];
++		out[1] = log_results[1];
++		out[6] = log_results[2];
++
++		/* out[5]: sign-preserving log2(|err_us| + 1) */
++		{
++			union { float f; u32 i; } res = { .f = log_results[3] };
++			union { float f; u32 i; } sgn = { .f = err_f };
++
++			res.i |= sgn.i & 0x80000000u;
++			out[5] = res.f;
++		}
++	}
++
++	/* Update log_history ring buffer */
++	{
++		int prev = (d->hist_idx - 1 + NAP_HISTORY_SIZE) % NAP_HISTORY_SIZE;
++
++		d->log_history[prev] = log_results[1];
++	}
++
++	/* Compute log_history statistics: avg, min, max */
++	logring_compute(d, &lr);
++	out[2] = lr.avg;
++	out[3] = lr.min;
++	out[4] = lr.max;
++
++	/* out[7]: log2(latency_req) - log2(deepest_lat), 0 if unconstrained */
++	{
++		u64 deepest_lat = drv->states[drv->state_count - 1]
++				      .exit_latency_ns;
++		bool lat_valid = (latency_req < PM_QOS_LATENCY_ANY_NS &&
++				  deepest_lat > 0);
++
++		if (lat_valid)
++			out[7] = fast_log2f(float_max((float)latency_req, 1.0f))
++			       - fast_log2f(float_max((float)deepest_lat, 1.0f));
++		else
++			out[7] = 0.0f;
++	}
++
++	d->last_predicted_ns = ktime_to_ns(sleep_length);
++}
++
++/* ================================================================
++ * FPU entry point for nap_select
++ *
++ * Called within kernel_fpu_begin()/kernel_fpu_end().
++ * Returns: selected idle state index (>= 0), or -1 to fall back
++ *          to the integer heuristic.
++ * ================================================================
++ */
++
++int nap_fpu_select(struct cpuidle_driver *drv,
++		   struct cpuidle_device *dev,
++		   struct nap_cpu_data *d)
++{
++	s64 latency_req = cpuidle_governor_latency_req(dev->cpu);
++
++	/* Handle deferred weight reset (set by sysfs or nap_enable) */
++	if (unlikely(d->reset_pending)) {
++		int e;
++
++		for (e = 0; e < NAP_NUM_EXPERTS; e++)
++			nap_init_weights(&d->expert_weights[e]);
++		nap_init_log2_cost(d, drv);
++		d->stats.learn_count = 0;
++		d->needs_learn = false;
++		d->reset_pending = false;
++	}
++
++	/* Deferred learning (always, even during warmup) */
++	if (d->needs_learn) {
++		float log2_eff = d->nn_output;
++		float alpha = (float)d->overshoot_pctl_millths
++			      / 1000.0f;
++		int nn_selected = 0;
++		bool is_overshoot;
++		int i;
++
++		/* Simulate which state the NN selected */
++		for (i = drv->state_count - 1; i > 0; i--) {
++			if (d->log2_cost[i] <= log2_eff) {
++				nn_selected = i;
++				break;
++			}
++		}
++
++		/*
++		 * Direct overshoot loss.
++		 *
++		 * Base the gradient on whether the simulated state
++		 * selection actually caused overshoot
++		 * (actual < target_residency).
++		 *
++		 * The asymmetric weight is encoded in the learning
++		 * rate (not in d_out) so that gradient clamping
++		 * cannot destroy the asymmetry.  d_out is ±1 and
++		 * gets clipped symmetrically; the (1-α) vs α ratio
++		 * is preserved through learn_lr.
++		 *
++		 * At equilibrium, P(overshoot) converges to α.
++		 * α = overshoot_pctl / 1000.
++		 */
++		{
++			float base_lr = (float)d->learning_rate_millths
++					/ 1000.0f;
++
++			is_overshoot = (nn_selected > 0 &&
++				d->learn_actual_ns <
++				drv->states[nn_selected].target_residency_ns);
++
++			/*
++			 * When the output was clamped at the upper
++			 * limit (nn_output == features[0]), the NN
++			 * is already predicting the maximum possible
++			 * sleep time.  Non-overshoot events would
++			 * push weights UP, but the output cannot
++			 * actually increase.  Suppress this gradient
++			 * to prevent unbounded weight growth in idle
++			 * systems where natural overshoot rate < α.
++			 *
++			 * Overshoot events still learn normally
++			 * (push DOWN) even when clamped.
++			 */
++			if (d->output_clamped && !is_overshoot) {
++				d->learn_lr = 0;
++				d->learn_d_out = 0;
++			} else {
++				d->learn_d_out = is_overshoot
++					? 1.0f : -1.0f;
++				d->learn_lr = is_overshoot
++					? base_lr * (1.0f - alpha)
++					: base_lr * alpha;
++			}
++		}
++
++		d->stats.learn_count++;
++
++		nap_nn_learn(d);
++		d->needs_learn = false;
++	}
++
++	/*
++	 * Feature extraction + NN forward pass.
++	 * features_f32 is __aligned(64) in nap_cpu_data, satisfying
++	 * AVX-512 vmovaps requirements.
++	 */
++	nap_extract_features(drv, dev, d->features_f32, latency_req);
++
++	/* MoE: 3-way expert selection based on log2(sleep_length) */
++	if (d->features_f32[0] >= d->expert_deep)
++		d->active_expert = 2;		/* deep: deepest C-state */
++	else if (d->features_f32[0] >= d->expert_mid)
++		d->active_expert = 1;		/* long: nohz intermediate */
++	else
++		d->active_expert = 0;		/* short: tick-bound */
++	d->active_w = &d->expert_weights[d->active_expert];
++
++	nap_nn_forward(d->features_f32, &d->nn_output, d->hidden_out,
++		       d->active_w);
++
++	/*
++	 * Clamp NN output: predicted sleep cannot exceed sleep_length
++	 * (next timer event).  features_f32[0] = log2(sleep_length).
++	 *
++	 * Track whether the clamp was applied so the learning block
++	 * can suppress "push up" gradients when the output is already
++	 * at the maximum.  Without this, weights diverge unboundedly
++	 * in idle systems where the natural overshoot rate < alpha.
++	 */
++	d->output_clamped = (d->nn_output > d->features_f32[0]);
++	if (d->output_clamped)
++		d->nn_output = d->features_f32[0];
++
++	/*
++	 * Threshold-based selection using NN predicted sleep time.
++	 *
++	 * The NN directly outputs log2(predicted_sleep) in ns.
++	 * Select the deepest feasible state whose cost ≤ predicted_sleep.
++	 */
++	{
++		float log2_eff = d->nn_output;
++		int idx = 0, i;
++
++		for (i = drv->state_count - 1; i > 0; i--) {
++			if (dev->states_usage[i].disable)
++				continue;
++			if (drv->states[i].exit_latency_ns > latency_req)
++				continue;
++			if (d->log2_cost[i] <= log2_eff) {
++				idx = i;
++				break;
++			}
++		}
++		return idx;
++	}
++}
+diff --git a/drivers/cpuidle/governors/nap/nap_nn_avx2.c b/drivers/cpuidle/governors/nap/nap_nn_avx2.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..96e5415423a16abb55c7720750332113fee1ad73
+--- /dev/null
++++ b/drivers/cpuidle/governors/nap/nap_nn_avx2.c
+@@ -0,0 +1,135 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * nap_nn_avx2.c — AVX2+FMA forward pass and backpropagation for the nap MLP
++ *
++ * 8→8→1 scalar regression (log2 correction factor).
++ * Uses 256-bit ymm registers: 8 hidden neurons = 1 ymm.
++ * FMA via vfmadd231ps for fused multiply-add.
++ *
++ * Must be called within kernel_fpu_begin/end.
++ * Compiled with: CFLAGS += -mavx2 -mfma
++ */
++
++#include "nap.h"
++
++/* Aligned load/store: GCC translates v8sf* dereference to vmovaps */
++static inline v8sf v8sf_load(const float *p)   { return *(const v8sf *)p; }
++static inline void v8sf_store(float *p, v8sf v) { *(v8sf *)p = v; }
++
++/* FMA: a*b+c — vfmadd231ps: dest = src1 * src2 + dest */
++static inline v8sf v8sf_fmadd(v8sf a, v8sf b, v8sf c)
++{
++	asm("vfmadd231ps %2, %1, %0" : "+x"(c) : "x"(a), "xm"(b));
++	return c;
++}
++
++/* ymm clamp: max(min(v, hi), lo) */
++static inline v8sf v8sf_clamp(v8sf v, v8sf lo, v8sf hi)
++{
++	return __builtin_ia32_maxps256(__builtin_ia32_minps256(v, hi), lo);
++}
++
++void nap_nn_forward_avx2(const float *input,
++			 float *output,
++			 float *hidden_save,
++			 const struct nap_weights *w)
++{
++	int j;
++
++	/* === Hidden layer: 8 outputs = 1×ymm, 2-way accumulator === */
++	v8sf acc0 = v8sf_load(&w->b_h1[0]);
++	v8sf acc1 = V8SF_ZERO;
++
++	for (j = 0; j < NAP_INPUT_SIZE; j += 2) {
++		v8sf x0 = V8SF_SET1(input[j]);
++		v8sf x1 = V8SF_SET1(input[j + 1]);
++
++		acc0 = v8sf_fmadd(v8sf_load(&w->w_h1[j][0]),     x0, acc0);
++		acc1 = v8sf_fmadd(v8sf_load(&w->w_h1[j + 1][0]), x1, acc1);
++	}
++
++	/* Merge accumulators + ReLU */
++	{
++		v8sf h = __builtin_ia32_maxps256(acc0 + acc1, V8SF_ZERO);
++
++		v8sf_store(hidden_save, h);
++
++		/* === Output layer: dot(hidden[8], w_out[8]) + b_out === */
++		{
++			v8sf p = v8sf_load(&w->w_out[0]) * h;
++
++			/* Horizontal reduce: 8 → 4 → scalar */
++			v4sf lo = __builtin_ia32_vextractf128_ps256(p, 0);
++			v4sf hi = __builtin_ia32_vextractf128_ps256(p, 1);
++			v4sf s4 = lo + hi;
++
++			*output = s4[0] + s4[1] + s4[2] + s4[3] + w->b_out;
++		}
++	}
++}
++
++/*
++ * Online learning (backpropagation) — AVX2+FMA
++ *
++ * Output: scalar d_out (pre-computed by caller)
++ * Hidden layer: 8 neurons = 1×ymm
++ */
++void nap_nn_learn_avx2(struct nap_cpu_data *d)
++{
++	int i;
++	float d_out_scalar = d->learn_d_out;
++	float *d_hid = d->learn_d_hid;
++	float lr = d->learn_lr;
++	float clamp_val = (float)d->max_grad_norm_millths / 1000.0f;
++	v8sf v_neg_lr = V8SF_SET1(-lr);
++	v8sf v_cl_hi  = V8SF_SET1(clamp_val);
++	v8sf v_cl_lo  = V8SF_SET1(-clamp_val);
++
++	/*
++	 * Hidden gradient: d_hid[j] = relu'(h[j]) * w_out[j] * d_out.
++	 * vcmpps + vandps: branchless SIMD mask (1×ymm = 8 neurons).
++	 */
++	v8sf dh;
++	{
++		v8sf vd = V8SF_SET1(d_out_scalar);
++		v8sf g = v8sf_load(&d->active_w->w_out[0]) * vd;
++		v8sf mask = __builtin_ia32_cmpps256(
++				v8sf_load(&d->hidden_out[0]), V8SF_ZERO, 14);
++
++		asm("vandps %2, %1, %0" : "=x"(dh) : "x"(g), "xm"(mask));
++		v8sf_store(d_hid, dh);
++	}
++
++	/* Output weight update: w_out[j] -= lr * clamp(h[j] * d_out) */
++	{
++		v8sf vd = V8SF_SET1(d_out_scalar);
++		v8sf *w = (v8sf *)&d->active_w->w_out[0];
++
++		*w = v8sf_fmadd(v_neg_lr,
++				v8sf_clamp(v8sf_load(&d->hidden_out[0]) * vd,
++					   v_cl_lo, v_cl_hi),
++				*w);
++	}
++
++	/* Output bias update (scalar) */
++	d->active_w->b_out -= lr * fclampf(d_out_scalar, -clamp_val, clamp_val);
++
++	/* Hidden weight update: w_h1[i][j] -= lr * clamp(feat[i] * d_hid[j]) */
++	for (i = 0; i < NAP_INPUT_SIZE; i++) {
++		v8sf vf = V8SF_SET1(d->features_f32[i]);
++		v8sf *w = (v8sf *)&d->active_w->w_h1[i][0];
++
++		*w = v8sf_fmadd(v_neg_lr,
++				v8sf_clamp(vf * dh, v_cl_lo, v_cl_hi),
++				*w);
++	}
++
++	/* Hidden bias update */
++	{
++		v8sf *b = (v8sf *)&d->active_w->b_h1[0];
++
++		*b = v8sf_fmadd(v_neg_lr,
++				v8sf_clamp(dh, v_cl_lo, v_cl_hi),
++				*b);
++	}
++}
+diff --git a/drivers/cpuidle/governors/nap/nap_nn_sse2.c b/drivers/cpuidle/governors/nap/nap_nn_sse2.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..26c676d3ceca068b6c05d57eb926d9ed429f8fc5
+--- /dev/null
++++ b/drivers/cpuidle/governors/nap/nap_nn_sse2.c
+@@ -0,0 +1,137 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * nap_nn_sse2.c — SSE2 forward pass and backpropagation for the nap MLP
++ *
++ * 8→8→1 scalar regression (log2 correction factor).
++ * Baseline implementation using SSE2, which is always available on x86_64.
++ * No FMA — uses separate mul + add (2 instructions per MAC).
++ *
++ * Must be called within kernel_fpu_begin/end.
++ * Compiled with: CFLAGS += -msse2
++ */
++
++#include "nap.h"
++
++/* Aligned load/store */
++static inline v4sf v4sf_load(const float *p)   { return *(const v4sf *)p; }
++static inline void v4sf_store(float *p, v4sf v) { *(v4sf *)p = v; }
++
++/* ReLU helper */
++static inline v4sf v4sf_max(v4sf a, v4sf b)
++{
++	return __builtin_ia32_maxps(a, b);
++}
++
++void nap_nn_forward_sse2(const float *input,
++			 float *output,
++			 float *hidden_save,
++			 const struct nap_weights *w)
++{
++	int j;
++
++	/* === Hidden layer: 8 outputs = 2×xmm === */
++	v4sf acc0 = v4sf_load(&w->b_h1[0]);
++	v4sf acc1 = v4sf_load(&w->b_h1[4]);
++
++	for (j = 0; j < NAP_INPUT_SIZE; j++) {
++		v4sf x = V4SF_SET1(input[j]);
++
++		acc0 += v4sf_load(&w->w_h1[j][0]) * x;
++		acc1 += v4sf_load(&w->w_h1[j][4]) * x;
++	}
++
++	/* ReLU */
++	{
++		v4sf zero = V4SF_SET1(0.0f);
++
++		acc0 = v4sf_max(acc0, zero);
++		acc1 = v4sf_max(acc1, zero);
++	}
++	v4sf_store(&hidden_save[0], acc0);
++	v4sf_store(&hidden_save[4], acc1);
++
++	/* === Output layer: dot(hidden[8], w_out[8]) + b_out → 1 scalar === */
++	{
++		v4sf p0 = v4sf_load(&w->w_out[0]) * acc0;
++		v4sf p1 = v4sf_load(&w->w_out[4]) * acc1;
++		v4sf sum = p0 + p1;
++
++		*output = sum[0] + sum[1] + sum[2] + sum[3] + w->b_out;
++	}
++}
++
++/*
++ * Online learning (backpropagation) — SSE2
++ *
++ * Output: scalar d_out (pre-computed by caller)
++ * Hidden layer: 8 neurons = 2×xmm
++ */
++void nap_nn_learn_sse2(struct nap_cpu_data *d)
++{
++	int i;
++	float d_out_scalar = d->learn_d_out;
++	float *d_hid = d->learn_d_hid;
++	float lr = d->learn_lr;
++	float clamp_val = (float)d->max_grad_norm_millths / 1000.0f;
++	v4sf v_lr    = V4SF_SET1(lr);
++	v4sf v_cl_hi = V4SF_SET1(clamp_val);
++	v4sf v_cl_lo = V4SF_SET1(-clamp_val);
++
++	/*
++	 * Hidden gradient: d_hid[j] = relu'(h[j]) * w_out[j] * d_out.
++	 * Must be computed before output weight update to use pre-update
++	 * w_out.
++	 */
++	{
++		v4sf vd = V4SF_SET1(d_out_scalar);
++		v4sf zero = V4SF_SET1(0.0f);
++		v4sf h, g;
++		v4si m;
++
++		h = v4sf_load(&d->hidden_out[0]);
++		g = v4sf_load(&d->active_w->w_out[0]) * vd;
++		m = (v4si)(h > zero);
++		v4sf_store(&d_hid[0], v4si_as_v4sf(v4sf_as_v4si(g) & m));
++
++		h = v4sf_load(&d->hidden_out[4]);
++		g = v4sf_load(&d->active_w->w_out[4]) * vd;
++		m = (v4si)(h > zero);
++		v4sf_store(&d_hid[4], v4si_as_v4sf(v4sf_as_v4si(g) & m));
++	}
++
++	/* Output weight update: w_out[j] -= lr * clamp(h[j] * d_out) */
++	{
++		v4sf vd = V4SF_SET1(d_out_scalar);
++		v4sf *w = (v4sf *)&d->active_w->w_out[0];
++
++		w[0] -= v_lr * v4sf_clamp(v4sf_load(&d->hidden_out[0]) * vd,
++					  v_cl_lo, v_cl_hi);
++		w[1] -= v_lr * v4sf_clamp(v4sf_load(&d->hidden_out[4]) * vd,
++					  v_cl_lo, v_cl_hi);
++	}
++
++	/* Output bias update: b_out -= lr * clamp(d_out) */
++	d->active_w->b_out -= lr * fclampf(d_out_scalar, -clamp_val, clamp_val);
++
++	/* Hidden weight update: w_h1[i][j] -= lr * clamp(feat[i] * d_hid[j]) */
++	{
++		v4sf dh0 = *(const v4sf *)&d_hid[0];
++		v4sf dh1 = *(const v4sf *)&d_hid[4];
++
++		for (i = 0; i < NAP_INPUT_SIZE; i++) {
++			v4sf vf = V4SF_SET1(d->features_f32[i]);
++			v4sf *w = (v4sf *)&d->active_w->w_h1[i][0];
++
++			w[0] -= v_lr * v4sf_clamp(vf * dh0, v_cl_lo, v_cl_hi);
++			w[1] -= v_lr * v4sf_clamp(vf * dh1, v_cl_lo, v_cl_hi);
++		}
++
++		/* Hidden bias update: b_h1[j] -= lr * clamp(d_hid[j]) */
++		{
++			v4sf *b = (v4sf *)&d->active_w->b_h1[0];
++
++			b[0] -= v_lr * v4sf_clamp(dh0, v_cl_lo, v_cl_hi);
++			b[1] -= v_lr * v4sf_clamp(dh1, v_cl_lo, v_cl_hi);
++		}
++	}
++}
+diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/vangogh_ppt.c b/drivers/gpu/drm/amd/pm/swsmu/smu11/vangogh_ppt.c
+index 3e3c68448ba9d319befd2a7b571511eb6b5c56a2..f6fab65f538a166505342973b8d708b04f11cede 100644
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu11/vangogh_ppt.c
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu11/vangogh_ppt.c
+@@ -2184,7 +2184,7 @@ static int vangogh_set_fine_grain_gfx_freq_parameters(struct smu_context *smu)
+ 	smu->gfx_actual_soft_max_freq = 0;
+ 
+ 	smu->cpu_default_soft_min_freq = 1400;
+-	smu->cpu_default_soft_max_freq = 3500;
++	smu->cpu_default_soft_max_freq = 4200;
+ 	smu->cpu_actual_soft_min_freq = 0;
+ 	smu->cpu_actual_soft_max_freq = 0;
+ 
+@@ -2346,7 +2346,7 @@ static int vangogh_get_power_limit(struct smu_context *smu,
+ 	if (default_power_limit)
+ 		*default_power_limit = ppt_limit / 1000;
+ 	if (max_power_limit)
+-		*max_power_limit = 29;
++		*max_power_limit = 50;
+ 	if (min_power_limit)
+ 		*min_power_limit = 0;
+ 
+@@ -2358,7 +2358,7 @@ static int vangogh_get_power_limit(struct smu_context *smu,
+ 	/* convert from milliwatt to watt */
+ 	power_context->current_fast_ppt_limit =
+ 			power_context->default_fast_ppt_limit = ppt_limit / 1000;
+-	power_context->max_fast_ppt_limit = 30;
++	power_context->max_fast_ppt_limit = 51;
+ 
+ 	return ret;
+ }
+diff --git a/drivers/gpu/drm/scheduler/sched_main.c b/drivers/gpu/drm/scheduler/sched_main.c
+index 214ed02cb496450b81e9f813083c3499420576a9..b6373aaa58167c861961d53f3a6970d5f86bb769 100644
+--- a/drivers/gpu/drm/scheduler/sched_main.c
++++ b/drivers/gpu/drm/scheduler/sched_main.c
+@@ -84,13 +84,13 @@
+ #define CREATE_TRACE_POINTS
+ #include "gpu_scheduler_trace.h"
+ 
+-int drm_sched_policy = DRM_SCHED_POLICY_FIFO;
++int drm_sched_policy = DRM_SCHED_POLICY_RR;
+ 
+ /**
+  * DOC: sched_policy (int)
+  * Used to override default entities scheduling policy in a run queue.
+  */
+-MODULE_PARM_DESC(sched_policy, "Specify the scheduling policy for entities on a run-queue, " __stringify(DRM_SCHED_POLICY_RR) " = Round Robin, " __stringify(DRM_SCHED_POLICY_FIFO) " = FIFO (default), " __stringify(DRM_SCHED_POLICY_FAIR) " = Fair (experimental).");
++MODULE_PARM_DESC(sched_policy, "Specify the scheduling policy for entities on a run-queue, " __stringify(DRM_SCHED_POLICY_RR) " = Round Robin (default), " __stringify(DRM_SCHED_POLICY_FIFO) " = FIFO, " __stringify(DRM_SCHED_POLICY_FAIR) " = Fair (experimental).");
+ module_param_named(sched_policy, drm_sched_policy, int, 0444);
+ 
+ static u32 drm_sched_available_credits(struct drm_gpu_scheduler *sched)
+diff --git a/drivers/idle/intel_idle.c b/drivers/idle/intel_idle.c
+index 49c4ac9c7bb6eb28c1c1721092f4c07f037391d9..f73a5c41906ea6aa8eb69efe5f337399655d4266 100644
+--- a/drivers/idle/intel_idle.c
++++ b/drivers/idle/intel_idle.c
+@@ -610,7 +610,7 @@ static struct cpuidle_state hsw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x01",
+ 		.flags = MWAIT2flg(0x01) | CPUIDLE_FLAG_ALWAYS_ENABLE,
+ 		.exit_latency = 10,
+-		.target_residency = 20,
++		.target_residency = 120,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -618,7 +618,7 @@ static struct cpuidle_state hsw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x10",
+ 		.flags = MWAIT2flg(0x10) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 33,
+-		.target_residency = 100,
++		.target_residency = 900,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -626,7 +626,7 @@ static struct cpuidle_state hsw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x20",
+ 		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 133,
+-		.target_residency = 400,
++		.target_residency = 1000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -634,7 +634,7 @@ static struct cpuidle_state hsw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x32",
+ 		.flags = MWAIT2flg(0x32) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 166,
+-		.target_residency = 500,
++		.target_residency = 1500,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -642,7 +642,7 @@ static struct cpuidle_state hsw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x40",
+ 		.flags = MWAIT2flg(0x40) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 300,
+-		.target_residency = 900,
++		.target_residency = 2000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -650,7 +650,7 @@ static struct cpuidle_state hsw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x50",
+ 		.flags = MWAIT2flg(0x50) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 600,
+-		.target_residency = 1800,
++		.target_residency = 5000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -658,7 +658,7 @@ static struct cpuidle_state hsw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x60",
+ 		.flags = MWAIT2flg(0x60) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 2600,
+-		.target_residency = 7700,
++		.target_residency = 9000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -678,7 +678,7 @@ static struct cpuidle_state bdw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x01",
+ 		.flags = MWAIT2flg(0x01) | CPUIDLE_FLAG_ALWAYS_ENABLE,
+ 		.exit_latency = 10,
+-		.target_residency = 20,
++		.target_residency = 120,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -686,7 +686,7 @@ static struct cpuidle_state bdw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x10",
+ 		.flags = MWAIT2flg(0x10) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 40,
+-		.target_residency = 100,
++		.target_residency = 1000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -694,7 +694,7 @@ static struct cpuidle_state bdw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x20",
+ 		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 133,
+-		.target_residency = 400,
++		.target_residency = 1000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -702,7 +702,7 @@ static struct cpuidle_state bdw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x32",
+ 		.flags = MWAIT2flg(0x32) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 166,
+-		.target_residency = 500,
++		.target_residency = 2000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -710,7 +710,7 @@ static struct cpuidle_state bdw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x40",
+ 		.flags = MWAIT2flg(0x40) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 300,
+-		.target_residency = 900,
++		.target_residency = 4000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -718,7 +718,7 @@ static struct cpuidle_state bdw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x50",
+ 		.flags = MWAIT2flg(0x50) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 600,
+-		.target_residency = 1800,
++		.target_residency = 7000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -726,7 +726,7 @@ static struct cpuidle_state bdw_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x60",
+ 		.flags = MWAIT2flg(0x60) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 2600,
+-		.target_residency = 7700,
++		.target_residency = 9000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -747,7 +747,7 @@ static struct cpuidle_state skl_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x01",
+ 		.flags = MWAIT2flg(0x01) | CPUIDLE_FLAG_ALWAYS_ENABLE,
+ 		.exit_latency = 10,
+-		.target_residency = 20,
++		.target_residency = 120,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -755,7 +755,7 @@ static struct cpuidle_state skl_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x10",
+ 		.flags = MWAIT2flg(0x10) | CPUIDLE_FLAG_TLB_FLUSHED,
+ 		.exit_latency = 70,
+-		.target_residency = 100,
++		.target_residency = 1000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -763,7 +763,7 @@ static struct cpuidle_state skl_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x20",
+ 		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 85,
+-		.target_residency = 200,
++		.target_residency = 600,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -771,7 +771,7 @@ static struct cpuidle_state skl_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x33",
+ 		.flags = MWAIT2flg(0x33) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 124,
+-		.target_residency = 800,
++		.target_residency = 3000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -779,7 +779,7 @@ static struct cpuidle_state skl_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x40",
+ 		.flags = MWAIT2flg(0x40) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 200,
+-		.target_residency = 800,
++		.target_residency = 3200,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -787,7 +787,7 @@ static struct cpuidle_state skl_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x50",
+ 		.flags = MWAIT2flg(0x50) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 480,
+-		.target_residency = 5000,
++		.target_residency = 9000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -795,7 +795,7 @@ static struct cpuidle_state skl_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x60",
+ 		.flags = MWAIT2flg(0x60) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 890,
+-		.target_residency = 5000,
++		.target_residency = 9000,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+@@ -816,7 +816,7 @@ static struct cpuidle_state skx_cstates[] __initdata = {
+ 		.desc = "MWAIT 0x01",
+ 		.flags = MWAIT2flg(0x01) | CPUIDLE_FLAG_ALWAYS_ENABLE,
+ 		.exit_latency = 10,
+-		.target_residency = 20,
++		.target_residency = 300,
+ 		.enter = intel_idle,
+ 		.enter_s2idle = intel_idle_s2idle, },
+ 	{
+diff --git a/drivers/net/wireless/ath/ath11k/ahb.c b/drivers/net/wireless/ath/ath11k/ahb.c
+index 1e1dea485760b326013c9ba638790ae12e032e13..c3a103e7176c2a9e8857bc7c6742d7acf2555e06 100644
+--- a/drivers/net/wireless/ath/ath11k/ahb.c
++++ b/drivers/net/wireless/ath/ath11k/ahb.c
+@@ -198,12 +198,18 @@ static const struct ath11k_pci_ops ath11k_ahb_pci_ops_wcn6750 = {
+ 
+ static inline u32 ath11k_ahb_read32(struct ath11k_base *ab, u32 offset)
+ {
+-	return ioread32(ab->mem + offset);
++	if ((offset & ATH11K_REG_TYPE_MASK) == ATH11K_REG_TYPE_CE)
++		return ioread32(ab->mem_ce + FIELD_GET(ATH11K_REG_OFFSET_MASK, offset));
++	else
++		return ioread32(ab->mem + FIELD_GET(ATH11K_REG_OFFSET_MASK, offset));
+ }
+ 
+ static inline void ath11k_ahb_write32(struct ath11k_base *ab, u32 offset, u32 value)
+ {
+-	iowrite32(value, ab->mem + offset);
++	if ((offset & ATH11K_REG_TYPE_MASK) == ATH11K_REG_TYPE_CE)
++		iowrite32(value, ab->mem_ce + FIELD_GET(ATH11K_REG_OFFSET_MASK, offset));
++	else
++		iowrite32(value, ab->mem + FIELD_GET(ATH11K_REG_OFFSET_MASK, offset));
+ }
+ 
+ static void ath11k_ahb_kill_tasklets(struct ath11k_base *ab)
+@@ -275,9 +281,9 @@ static void ath11k_ahb_ce_irq_enable(struct ath11k_base *ab, u16 ce_id)
+ 	const struct ce_ie_addr *ce_ie_addr = ab->hw_params.ce_ie_addr;
+ 	u32 ie1_reg_addr, ie2_reg_addr, ie3_reg_addr;
+ 
+-	ie1_reg_addr = ce_ie_addr->ie1_reg_addr + ATH11K_CE_OFFSET(ab);
+-	ie2_reg_addr = ce_ie_addr->ie2_reg_addr + ATH11K_CE_OFFSET(ab);
+-	ie3_reg_addr = ce_ie_addr->ie3_reg_addr + ATH11K_CE_OFFSET(ab);
++	ie1_reg_addr = ce_ie_addr->ie1_reg_addr;
++	ie2_reg_addr = ce_ie_addr->ie2_reg_addr;
++	ie3_reg_addr = ce_ie_addr->ie3_reg_addr;
+ 
+ 	ce_attr = &ab->hw_params.host_ce_config[ce_id];
+ 	if (ce_attr->src_nentries)
+@@ -296,9 +302,9 @@ static void ath11k_ahb_ce_irq_disable(struct ath11k_base *ab, u16 ce_id)
+ 	const struct ce_ie_addr *ce_ie_addr = ab->hw_params.ce_ie_addr;
+ 	u32 ie1_reg_addr, ie2_reg_addr, ie3_reg_addr;
+ 
+-	ie1_reg_addr = ce_ie_addr->ie1_reg_addr + ATH11K_CE_OFFSET(ab);
+-	ie2_reg_addr = ce_ie_addr->ie2_reg_addr + ATH11K_CE_OFFSET(ab);
+-	ie3_reg_addr = ce_ie_addr->ie3_reg_addr + ATH11K_CE_OFFSET(ab);
++	ie1_reg_addr = ce_ie_addr->ie1_reg_addr;
++	ie2_reg_addr = ce_ie_addr->ie2_reg_addr;
++	ie3_reg_addr = ce_ie_addr->ie3_reg_addr;
+ 
+ 	ce_attr = &ab->hw_params.host_ce_config[ce_id];
+ 	if (ce_attr->src_nentries)
+diff --git a/drivers/net/wireless/ath/ath11k/hal.c b/drivers/net/wireless/ath/ath11k/hal.c
+index 98bd9e3f0aae952fd85165cda20ca1dbce22a4c4..4c17ea98fa5bfa217caaedd7e6eb8fa704d66519 100644
+--- a/drivers/net/wireless/ath/ath11k/hal.c
++++ b/drivers/net/wireless/ath/ath11k/hal.c
+@@ -1273,20 +1273,16 @@ static int ath11k_hal_srng_create_config(struct ath11k_base *ab)
+ 	s->reg_start[1] = HAL_SEQ_WCSS_UMAC_TCL_REG + HAL_TCL_STATUS_RING_HP;
+ 
+ 	s = &hal->srng_config[HAL_CE_SRC];
+-	s->reg_start[0] = HAL_SEQ_WCSS_UMAC_CE0_SRC_REG(ab) + HAL_CE_DST_RING_BASE_LSB +
+-		ATH11K_CE_OFFSET(ab);
+-	s->reg_start[1] = HAL_SEQ_WCSS_UMAC_CE0_SRC_REG(ab) + HAL_CE_DST_RING_HP +
+-		ATH11K_CE_OFFSET(ab);
++	s->reg_start[0] = HAL_SEQ_WCSS_UMAC_CE0_SRC_REG(ab) + HAL_CE_DST_RING_BASE_LSB;
++	s->reg_start[1] = HAL_SEQ_WCSS_UMAC_CE0_SRC_REG(ab) + HAL_CE_DST_RING_HP;
+ 	s->reg_size[0] = HAL_SEQ_WCSS_UMAC_CE1_SRC_REG(ab) -
+ 		HAL_SEQ_WCSS_UMAC_CE0_SRC_REG(ab);
+ 	s->reg_size[1] = HAL_SEQ_WCSS_UMAC_CE1_SRC_REG(ab) -
+ 		HAL_SEQ_WCSS_UMAC_CE0_SRC_REG(ab);
+ 
+ 	s = &hal->srng_config[HAL_CE_DST];
+-	s->reg_start[0] = HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab) + HAL_CE_DST_RING_BASE_LSB +
+-		ATH11K_CE_OFFSET(ab);
+-	s->reg_start[1] = HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab) + HAL_CE_DST_RING_HP +
+-		ATH11K_CE_OFFSET(ab);
++	s->reg_start[0] = HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab) + HAL_CE_DST_RING_BASE_LSB;
++	s->reg_start[1] = HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab) + HAL_CE_DST_RING_HP;
+ 	s->reg_size[0] = HAL_SEQ_WCSS_UMAC_CE1_DST_REG(ab) -
+ 		HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab);
+ 	s->reg_size[1] = HAL_SEQ_WCSS_UMAC_CE1_DST_REG(ab) -
+@@ -1294,9 +1290,8 @@ static int ath11k_hal_srng_create_config(struct ath11k_base *ab)
+ 
+ 	s = &hal->srng_config[HAL_CE_DST_STATUS];
+ 	s->reg_start[0] = HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab) +
+-		HAL_CE_DST_STATUS_RING_BASE_LSB + ATH11K_CE_OFFSET(ab);
+-	s->reg_start[1] = HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab) + HAL_CE_DST_STATUS_RING_HP +
+-		ATH11K_CE_OFFSET(ab);
++		HAL_CE_DST_STATUS_RING_BASE_LSB;
++	s->reg_start[1] = HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab) + HAL_CE_DST_STATUS_RING_HP;
+ 	s->reg_size[0] = HAL_SEQ_WCSS_UMAC_CE1_DST_REG(ab) -
+ 		HAL_SEQ_WCSS_UMAC_CE0_DST_REG(ab);
+ 	s->reg_size[1] = HAL_SEQ_WCSS_UMAC_CE1_DST_REG(ab) -
+diff --git a/drivers/net/wireless/ath/ath11k/hw.c b/drivers/net/wireless/ath/ath11k/hw.c
+index 93f9a03c48dc0fdd464841bdf2485e46ed51ea45..2b757e56b7f1d93c6bda37a523ff8bb632d22c23 100644
+--- a/drivers/net/wireless/ath/ath11k/hw.c
++++ b/drivers/net/wireless/ath/ath11k/hw.c
+@@ -2268,9 +2268,9 @@ const struct ce_ie_addr ath11k_ce_ie_addr_ipq8074 = {
+ };
+ 
+ const struct ce_ie_addr ath11k_ce_ie_addr_ipq5018 = {
+-	.ie1_reg_addr = CE_HOST_IPQ5018_IE_ADDRESS - HAL_IPQ5018_CE_WFSS_REG_BASE,
+-	.ie2_reg_addr = CE_HOST_IPQ5018_IE_2_ADDRESS - HAL_IPQ5018_CE_WFSS_REG_BASE,
+-	.ie3_reg_addr = CE_HOST_IPQ5018_IE_3_ADDRESS - HAL_IPQ5018_CE_WFSS_REG_BASE,
++	.ie1_reg_addr = ATH11K_REG_TYPE_CE + CE_HOST_IPQ5018_IE_ADDRESS - HAL_IPQ5018_CE_WFSS_REG_BASE,
++	.ie2_reg_addr = ATH11K_REG_TYPE_CE + CE_HOST_IPQ5018_IE_2_ADDRESS - HAL_IPQ5018_CE_WFSS_REG_BASE,
++	.ie3_reg_addr = ATH11K_REG_TYPE_CE + CE_HOST_IPQ5018_IE_3_ADDRESS - HAL_IPQ5018_CE_WFSS_REG_BASE,
+ };
+ 
+ const struct ce_remap ath11k_ce_remap_ipq5018 = {
+@@ -2809,13 +2809,13 @@ const struct ath11k_hw_regs ipq5018_regs = {
+ 	.hal_reo_status_hp = 0x00003070,
+ 
+ 	/* WCSS relative address */
+-	.hal_seq_wcss_umac_ce0_src_reg = 0x08400000
++	.hal_seq_wcss_umac_ce0_src_reg = ATH11K_REG_TYPE_CE + 0x08400000
+ 		- HAL_IPQ5018_CE_WFSS_REG_BASE,
+-	.hal_seq_wcss_umac_ce0_dst_reg = 0x08401000
++	.hal_seq_wcss_umac_ce0_dst_reg = ATH11K_REG_TYPE_CE + 0x08401000
+ 		- HAL_IPQ5018_CE_WFSS_REG_BASE,
+-	.hal_seq_wcss_umac_ce1_src_reg = 0x08402000
++	.hal_seq_wcss_umac_ce1_src_reg = ATH11K_REG_TYPE_CE + 0x08402000
+ 		- HAL_IPQ5018_CE_WFSS_REG_BASE,
+-	.hal_seq_wcss_umac_ce1_dst_reg = 0x08403000
++	.hal_seq_wcss_umac_ce1_dst_reg = ATH11K_REG_TYPE_CE + 0x08403000
+ 		- HAL_IPQ5018_CE_WFSS_REG_BASE,
+ 
+ 	/* WBM Idle address */
+diff --git a/drivers/net/wireless/ath/ath11k/hw.h b/drivers/net/wireless/ath/ath11k/hw.h
+index 4996536fbd14f1164caa9fad9099aa1b0f806d3f..b3a3dbe5a2d118cd7fac0d8fd397b72989ec1eaf 100644
+--- a/drivers/net/wireless/ath/ath11k/hw.h
++++ b/drivers/net/wireless/ath/ath11k/hw.h
+@@ -81,7 +81,12 @@
+ #define ATH11K_M3_FILE			"m3.bin"
+ #define ATH11K_REGDB_FILE_NAME		"regdb.bin"
+ 
+-#define ATH11K_CE_OFFSET(ab)	(ab->mem_ce - ab->mem)
++#define ATH11K_REG_TYPE_MASK		GENMASK(31, 28)
++#define  ATH11K_REG_TYPE(x)		FIELD_PREP_CONST(ATH11K_REG_TYPE_MASK, x)
++#define  ATH11K_REG_TYPE_NORMAL		ATH11K_REG_TYPE(0)
++#define  ATH11K_REG_TYPE_DP		ATH11K_REG_TYPE(1)
++#define  ATH11K_REG_TYPE_CE		ATH11K_REG_TYPE(2)
++#define ATH11K_REG_OFFSET_MASK		GENMASK(27, 0)
+ 
+ enum ath11k_hw_rate_cck {
+ 	ATH11K_HW_RATE_CCK_LP_11M = 0,
+diff --git a/drivers/net/wireless/ath/ath11k/mac.c b/drivers/net/wireless/ath/ath11k/mac.c
+index 2d55cdc4d165dee77c0efa212db54ad216193608..820b74ba1335b6c0731a9e8578793d9533bfa64c 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -4374,6 +4374,8 @@ static int ath11k_install_key(struct ath11k_vif *arvif,
+ 
+ 	if (cmd == DISABLE_KEY) {
+ 		arg.key_cipher = WMI_CIPHER_NONE;
++		/* Firmware key removal requests must not carry key material. */
++		arg.key_len = 0;
+ 		arg.key_data = NULL;
+ 		goto install;
+ 	}
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 350bae907ebf8ceebd0214aca922ee57f59cfd69..692621e2aa4d2ecc1e59afa8faab9d10fe114b6b 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -64,7 +64,7 @@ struct pci_pme_device {
+ 	struct pci_dev *dev;
+ };
+ 
+-#define PME_TIMEOUT 1000 /* How long between PME checks */
++#define PME_TIMEOUT 4000 /* How long between PME checks */
+ 
+ /*
+  * Following exit from Conventional Reset, devices must be ready within 1 sec
+diff --git a/include/linux/mm_inline.h b/include/linux/mm_inline.h
+index a8430a7ae05447ab69233e427366c4e40e8dddb9..3892ec6d3ea1fb8ed60f53e2a58b78b006468d4c 100644
+--- a/include/linux/mm_inline.h
++++ b/include/linux/mm_inline.h
+@@ -162,9 +162,9 @@ static inline int folio_lru_gen(const struct folio *folio)
+ 	return ((flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
+ }
+ 
+-static inline bool lru_gen_is_active(const struct lruvec *lruvec, int gen)
++static inline bool lru_gen_is_active(const struct lruvec *lruvec, int gen, int type)
+ {
+-	unsigned long max_seq = lruvec->lrugen.max_seq;
++	unsigned long max_seq = lruvec->lrugen.max_seq[type];
+ 
+ 	VM_WARN_ON_ONCE(gen >= MAX_NR_GENS);
+ 
+@@ -194,7 +194,7 @@ static inline void lru_gen_update_size(struct lruvec *lruvec, struct folio *foli
+ 
+ 	/* addition */
+ 	if (old_gen < 0) {
+-		if (lru_gen_is_active(lruvec, new_gen))
++		if (lru_gen_is_active(lruvec, new_gen, type))
+ 			lru += LRU_ACTIVE;
+ 		__update_lru_size(lruvec, lru, zone, delta);
+ 		return;
+@@ -202,20 +202,20 @@ static inline void lru_gen_update_size(struct lruvec *lruvec, struct folio *foli
+ 
+ 	/* deletion */
+ 	if (new_gen < 0) {
+-		if (lru_gen_is_active(lruvec, old_gen))
++		if (lru_gen_is_active(lruvec, old_gen, type))
+ 			lru += LRU_ACTIVE;
+ 		__update_lru_size(lruvec, lru, zone, -delta);
+ 		return;
+ 	}
+ 
+ 	/* promotion */
+-	if (!lru_gen_is_active(lruvec, old_gen) && lru_gen_is_active(lruvec, new_gen)) {
++	if (!lru_gen_is_active(lruvec, old_gen, type) && lru_gen_is_active(lruvec, new_gen, type)) {
+ 		__update_lru_size(lruvec, lru, zone, -delta);
+ 		__update_lru_size(lruvec, lru + LRU_ACTIVE, zone, delta);
+ 	}
+ 
+ 	/* demotion requires isolation, e.g., lru_deactivate_fn() */
+-	VM_WARN_ON_ONCE(lru_gen_is_active(lruvec, old_gen) && !lru_gen_is_active(lruvec, new_gen));
++	VM_WARN_ON_ONCE(lru_gen_is_active(lruvec, old_gen, type) && !lru_gen_is_active(lruvec, new_gen, type));
+ }
+ 
+ static inline unsigned long lru_gen_folio_seq(const struct lruvec *lruvec,
+@@ -249,7 +249,7 @@ static inline unsigned long lru_gen_folio_seq(const struct lruvec *lruvec,
+ 	else
+ 		gen = MAX_NR_GENS - (folio_test_workingset(folio) || folio_test_referenced(folio));
+ 
+-	return max(READ_ONCE(lrugen->max_seq) - gen + 1, READ_ONCE(lrugen->min_seq[type]));
++	return max(READ_ONCE(lrugen->max_seq[type]) - gen + 1, READ_ONCE(lrugen->min_seq[type]));
+ }
+ 
+ static inline bool lru_gen_add_folio(struct lruvec *lruvec, struct folio *folio, bool reclaiming)
+@@ -294,7 +294,7 @@ static inline bool lru_gen_del_folio(struct lruvec *lruvec, struct folio *folio,
+ 	VM_WARN_ON_ONCE_FOLIO(folio_test_unevictable(folio), folio);
+ 
+ 	/* for folio_migrate_flags() */
+-	flags = !reclaiming && lru_gen_is_active(lruvec, gen) ? BIT(PG_active) : 0;
++	flags = !reclaiming && lru_gen_is_active(lruvec, gen, folio_is_file_lru(folio)) ? BIT(PG_active) : 0;
+ 	flags = set_mask_bits(&folio->flags.f, LRU_GEN_MASK, flags);
+ 	gen = ((flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
+ 
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index ca27121871475c1de282e640b8ae3e02046f86ec..e66ffccbc89bbcc9d639e9fed4e4a376467141b7 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -24,6 +24,8 @@
+ #include <linux/local_lock.h>
+ #include <linux/zswap.h>
+ #include <linux/sizes.h>
++#include <linux/kfifo.h>
++#include <linux/completion.h>
+ #include <asm/page.h>
+ 
+ /* Free memory management - zoned buddy allocator.  */
+@@ -547,24 +549,21 @@ enum {
+ #endif
+ 
+ /*
+- * The youngest generation number is stored in max_seq for both anon and file
+- * types as they are aged on an equal footing. The oldest generation numbers are
+- * stored in min_seq[] separately for anon and file types so that they can be
+- * incremented independently. Ideally min_seq[] are kept in sync when both anon
+- * and file types are evictable. However, to adapt to situations like extreme
+- * swappiness, they are allowed to be out of sync by at most
+- * MAX_NR_GENS-MIN_NR_GENS-1.
++ * The youngest generation numbers are stored in max_seq[] for anon and file
++ * types so that they can be aged independently. The oldest generation numbers
++ * are stored in min_seq[] separately for anon and file types so that they can
++ * be incremented independently.
+  *
+  * The number of pages in each generation is eventually consistent and therefore
+  * can be transiently negative when reset_batch_size() is pending.
+  */
+ struct lru_gen_folio {
+-	/* the aging increments the youngest generation number */
+-	unsigned long max_seq;
++	/* the aging increments the youngest generation numbers */
++	unsigned long max_seq[ANON_AND_FILE];
+ 	/* the eviction increments the oldest generation numbers */
+ 	unsigned long min_seq[ANON_AND_FILE];
+ 	/* the birth time of each generation in jiffies */
+-	unsigned long timestamps[MAX_NR_GENS];
++	unsigned long timestamps[ANON_AND_FILE][MAX_NR_GENS];
+ 	/* the multi-gen LRU lists, lazily sorted on eviction */
+ 	struct list_head folios[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+ 	/* the multi-gen LRU sizes, eventually consistent */
+@@ -600,23 +599,25 @@ enum {
+ #define NR_BLOOM_FILTERS	2
+ 
+ struct lru_gen_mm_state {
+-	/* synced with max_seq after each iteration */
+-	unsigned long seq;
++	/* synced with max_seq[] after each iteration */
++	unsigned long seq[ANON_AND_FILE];
+ 	/* where the current iteration continues after */
+-	struct list_head *head;
++	struct list_head *head[ANON_AND_FILE];
+ 	/* where the last iteration ended before */
+-	struct list_head *tail;
++	struct list_head *tail[ANON_AND_FILE];
+ 	/* Bloom filters flip after each iteration */
+-	unsigned long *filters[NR_BLOOM_FILTERS];
++	unsigned long *filters[ANON_AND_FILE][NR_BLOOM_FILTERS];
+ 	/* the mm stats for debugging */
+-	unsigned long stats[NR_HIST_GENS][NR_MM_STATS];
++	unsigned long stats[ANON_AND_FILE][NR_HIST_GENS][NR_MM_STATS];
+ };
+ 
+ struct lru_gen_mm_walk {
+ 	/* the lruvec under reclaim */
+ 	struct lruvec *lruvec;
+-	/* max_seq from lru_gen_folio: can be out of date */
+-	unsigned long seq;
++	/* max_seq[] from lru_gen_folio: can be out of date */
++	unsigned long seq[ANON_AND_FILE];
++	/* which type is being aged (LRU_GEN_ANON or LRU_GEN_FILE) */
++	int aging_type;
+ 	/* the next address within an mm to scan */
+ 	unsigned long next_addr;
+ 	/* to batch promoted pages */
+@@ -1522,6 +1523,15 @@ typedef struct pglist_data {
+ 
+ 	atomic_t kswapd_failures;	/* Number of 'reclaimed == 0' runs */
+ 
++#ifdef CONFIG_SWAP
++#define KCOMPRESS_FIFO_SIZE 256
++	wait_queue_head_t kcompressd_wait;
++	struct completion kcompressd_started;
++	struct task_struct *kcompressd;
++	struct kfifo kcompress_fifo;
++	spinlock_t kcompress_fifo_lock;
++#endif
++
+ #ifdef CONFIG_COMPACTION
+ 	int kcompactd_max_order;
+ 	enum zone_type kcompactd_highest_zoneidx;
+diff --git a/include/linux/wait.h b/include/linux/wait.h
+index 7e215330199cfea27008f718e0336d0f48bfe17d..e17659a06c31d1276d4dec2cbb9f9f6b0343fbfe 100644
+--- a/include/linux/wait.h
++++ b/include/linux/wait.h
+@@ -163,6 +163,7 @@ static inline bool wq_has_sleeper(struct wait_queue_head *wq_head)
+ 
+ extern void add_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
+ extern void add_wait_queue_exclusive(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
++extern void add_wait_queue_exclusive_lifo(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
+ extern void add_wait_queue_priority(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
+ extern int add_wait_queue_priority_exclusive(struct wait_queue_head *wq_head,
+ 					     struct wait_queue_entry *wq_entry);
+@@ -1224,6 +1225,7 @@ do {										\
+  */
+ void prepare_to_wait(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state);
+ bool prepare_to_wait_exclusive(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state);
++void prepare_to_wait_exclusive_lifo(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state);
+ long prepare_to_wait_event(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state);
+ void finish_wait(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
+ long wait_woken(struct wait_queue_entry *wq_entry, unsigned mode, long timeout);
+diff --git a/include/uapi/linux/futex.h b/include/uapi/linux/futex.h
+index 10a36c551675bda5899bff5d40ce3e3c42136b06..3e5fc4bfd1a3f6ceabe2625d865cd63a357877a2 100644
+--- a/include/uapi/linux/futex.h
++++ b/include/uapi/linux/futex.h
+@@ -22,6 +22,7 @@
+ #define FUTEX_WAIT_REQUEUE_PI	11
+ #define FUTEX_CMP_REQUEUE_PI	12
+ #define FUTEX_LOCK_PI2		13
++#define FUTEX_WAIT_MULTIPLE	31
+ 
+ #define FUTEX_PRIVATE_FLAG	128
+ #define FUTEX_CLOCK_REALTIME	256
+@@ -126,6 +127,18 @@ struct futex_waitv {
+ 	__u32 __reserved;
+ };
+ 
++/**
++ * struct futex_wait_block - Legacy multiple-futex wait entry.
++ * @uaddr: Userspace address of the futex.
++ * @val: Value expected at the futex address.
++ * @bitset: Reserved legacy field, ignored by FUTEX_WAIT_MULTIPLE.
++ */
++struct futex_wait_block {
++	__u32 __user *uaddr;
++	__u32 val;
++	__u32 bitset;
++};
++
+ /*
+  * Support for robust futexes: the kernel cleans up held futexes at
+  * thread exit time.
+diff --git a/init/Kconfig b/init/Kconfig
+index df529b83ce96f1d1a0f5bacb70b9729f335e731f..c7a45a1b66203fc8ffdb4a8ea3908eb8303380d9 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -218,6 +218,16 @@ config THREAD_INFO_IN_TASK
+ 
+ menu "General setup"
+ 
++config ZEN_INTERACTIVE
++	bool "Tune kernel for interactivity"
++	default y
++	help
++	  Prefer responsiveness over throughput and power efficiency.
++	  Use background hugepage reclaim with synchronous compaction for
++	  madvise requests, disable unevictable compaction, and disable
++	  watermark boosting. Swap-in readahead is already disabled in
++	  this kernel independently of this option.
++
+ config CACHY
+ 	bool "Kernel tweaks by CachyOS"
+ 	default y
+@@ -365,6 +375,19 @@ config BUILD_SALT
+ 	  This is mostly useful for distributions which want to ensure the
+ 	  build is unique between builds. It's safe to leave the default.
+ 
++config POLLY_CLANG
++	bool "Use Clang Polly optimizations"
++	depends on CC_IS_CLANG && $(cc-option,-fplugin=LLVMPolly.so -mllvm -polly -mllvm -polly-ast-use-context -mllvm -polly-invariant-load-hoisting -mllvm -polly-loopfusion-greedy -mllvm -polly-run-inliner -mllvm -polly-vectorizer=stripmine -mllvm -polly-run-dce)
++	depends on !COMPILE_TEST
++	help
++	  This option enables Clang's polyhedral loop optimizer known as
++	  Polly. Polly is able to optimize various loops throughout the
++	  kernel for cache locality. This requires a Clang toolchain
++	  compiled with support for Polly. More information can be found
++	  from Polly's website:
++
++	    https://polly.llvm.org
++
+ config HAVE_KERNEL_GZIP
+ 	bool
+ 
+diff --git a/kernel/futex/syscalls.c b/kernel/futex/syscalls.c
+index 2fa19d9d008de9689798043d17f114b091339f17..2f54fe633a9c4564af20e5e244a270d03b2fa786 100644
+--- a/kernel/futex/syscalls.c
++++ b/kernel/futex/syscalls.c
+@@ -105,6 +105,78 @@ SYSCALL_DEFINE3(get_robust_list, int, pid,
+ 	return put_user(head, head_ptr);
+ }
+ 
++#ifdef CONFIG_COMPAT
++struct compat_futex_wait_block {
++	compat_uptr_t uaddr;
++	u32 val;
++	u32 bitset;
++};
++#endif
++
++static int futex_wait_multiple_legacy(u32 __user *uaddr, unsigned int count,
++				      unsigned int flags, ktime_t *abs_time)
++{
++	struct futex_wait_block __user *entries = (void __user *)uaddr;
++	struct hrtimer_sleeper timeout, *timer;
++	struct futex_vector *waiters;
++	unsigned int index;
++	int result;
++
++	if (!count || count > FUTEX_WAITV_MAX)
++		return -EINVAL;
++
++	waiters = kzalloc_objs(*waiters, count);
++	if (!waiters)
++		return -ENOMEM;
++
++	for (index = 0; index < count; index++) {
++		struct futex_wait_block entry;
++
++#ifdef CONFIG_COMPAT
++		/* Legacy entries contain pointers with the caller's word size. */
++		if (in_compat_syscall()) {
++			struct compat_futex_wait_block __user *compat_entries =
++				(void __user *)uaddr;
++			struct compat_futex_wait_block compat_entry;
++
++			if (copy_from_user(&compat_entry, &compat_entries[index],
++					   sizeof(compat_entry))) {
++				result = -EFAULT;
++				goto free_waiters;
++			}
++			entry.uaddr = compat_ptr(compat_entry.uaddr);
++			entry.val = compat_entry.val;
++			entry.bitset = compat_entry.bitset;
++		} else
++#endif
++		if (copy_from_user(&entry, &entries[index], sizeof(entry))) {
++			result = -EFAULT;
++			goto free_waiters;
++		}
++
++		waiters[index].w.flags = flags;
++		waiters[index].w.val = entry.val;
++		waiters[index].w.uaddr = (unsigned long)entry.uaddr;
++		waiters[index].q = futex_q_init;
++		waiters[index].q.wake = futex_wake_mark;
++	}
++
++	/* Copy failures must not leave an on-stack timer initialized. */
++	timer = futex_setup_timer(abs_time, &timeout, flags, 0);
++	result = futex_wait_multiple(waiters, count, timer);
++	/* Restarting a relative timeout would extend its original deadline. */
++	if (timer && result == -ERESTARTSYS)
++		result = -EINTR;
++	if (timer) {
++		hrtimer_cancel(&timer->timer);
++		destroy_hrtimer_on_stack(&timer->timer);
++	}
++
++free_waiters:
++	kfree(waiters);
++	return result;
++}
++
+ long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
+ 		u32 __user *uaddr2, u32 val2, u32 val3)
+ {
+@@ -126,6 +198,10 @@ long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
+ 	}
+ 
+ 	switch (cmd) {
++	case FUTEX_WAIT_MULTIPLE:
++		if (op & FUTEX_ROBUST_LIST32)
++			return -ENOSYS;
++		return futex_wait_multiple_legacy(uaddr, val, flags, timeout);
+ 	case FUTEX_WAIT:
+ 		val3 = FUTEX_BITSET_MATCH_ANY;
+ 		fallthrough;
+@@ -165,6 +241,7 @@ static __always_inline bool futex_cmd_has_timeout(u32 cmd)
+ {
+ 	switch (cmd) {
+ 	case FUTEX_WAIT:
++	case FUTEX_WAIT_MULTIPLE:
+ 	case FUTEX_LOCK_PI:
+ 	case FUTEX_LOCK_PI2:
+ 	case FUTEX_WAIT_BITSET:
+@@ -181,7 +258,7 @@ futex_init_timeout(u32 cmd, u32 op, struct timespec64 *ts, ktime_t *t)
+ 		return -EINVAL;
+ 
+ 	*t = timespec64_to_ktime(*ts);
+-	if (cmd == FUTEX_WAIT)
++	if (cmd == FUTEX_WAIT || cmd == FUTEX_WAIT_MULTIPLE)
+ 		*t = ktime_add_safe(ktime_get(), *t);
+ 	else if (cmd != FUTEX_LOCK_PI && !(op & FUTEX_CLOCK_REALTIME))
+ 		*t = timens_ktime_to_host(CLOCK_MONOTONIC, *t);
+diff --git a/kernel/locking/rwsem.c b/kernel/locking/rwsem.c
+index b9c180ac1eee7a20c7588146c40baa20757116e6..dd74726d6c818a856e5ff45a221cd15674241885 100644
+--- a/kernel/locking/rwsem.c
++++ b/kernel/locking/rwsem.c
+@@ -770,6 +770,7 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
+ 	struct task_struct *new, *owner;
+ 	unsigned long flags, new_flags;
+ 	enum owner_state state;
++	unsigned int spin_count = 0;
+ 
+ 	lockdep_assert_preemption_disabled();
+ 
+@@ -806,7 +807,10 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
+ 			break;
+ 		}
+ 
+-		cpu_relax();
++		if (spin_count < 1001)
++			spin_count++;
++		else
++			cpu_relax();
+ 	}
+ 
+ 	return state;
+diff --git a/kernel/sched/wait.c b/kernel/sched/wait.c
+index d033f600f48c6fc3a0a088ea5d9f6ed95ec4c86e..6c9531598632010b0d839c51681e1d1cd234f024 100644
+--- a/kernel/sched/wait.c
++++ b/kernel/sched/wait.c
+@@ -38,6 +38,17 @@ void add_wait_queue_exclusive(struct wait_queue_head *wq_head, struct wait_queue
+ }
+ EXPORT_SYMBOL(add_wait_queue_exclusive);
+ 
++void add_wait_queue_exclusive_lifo(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry)
++{
++	unsigned long flags;
++
++	wq_entry->flags |= WQ_FLAG_EXCLUSIVE;
++	spin_lock_irqsave(&wq_head->lock, flags);
++	__add_wait_queue(wq_head, wq_entry);
++	spin_unlock_irqrestore(&wq_head->lock, flags);
++}
++EXPORT_SYMBOL(add_wait_queue_exclusive_lifo);
++
+ void add_wait_queue_priority(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry)
+ {
+ 	unsigned long flags;
+@@ -278,6 +289,19 @@ prepare_to_wait_exclusive(struct wait_queue_head *wq_head, struct wait_queue_ent
+ }
+ EXPORT_SYMBOL(prepare_to_wait_exclusive);
+ 
++void prepare_to_wait_exclusive_lifo(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state)
++{
++	unsigned long flags;
++
++	wq_entry->flags |= WQ_FLAG_EXCLUSIVE;
++	spin_lock_irqsave(&wq_head->lock, flags);
++	if (list_empty(&wq_entry->entry))
++		__add_wait_queue(wq_head, wq_entry);
++	set_current_state(state);
++	spin_unlock_irqrestore(&wq_head->lock, flags);
++}
++EXPORT_SYMBOL(prepare_to_wait_exclusive_lifo);
++
+ void init_wait_entry(struct wait_queue_entry *wq_entry, int flags)
+ {
+ 	wq_entry->flags = flags;
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 9e0ca48249054ffab3cacf1fc92d3733b1041db9..d442c5a853b3288fe6cf44b1d81d3b0e9d8922e7 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -669,7 +669,7 @@ config COMPACTION
+ config COMPACT_UNEVICTABLE_DEFAULT
+ 	int
+ 	depends on COMPACTION
+-	default 0 if PREEMPT_RT
++	default 0 if PREEMPT_RT || ZEN_INTERACTIVE
+ 	default 1
+ 
+ #
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index c410f7c0a4b8b803160cfd27833e61a8a6793884..9d881c3415e64d2f11c53b1de58cd1c766c1f6a5 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -65,7 +65,7 @@ unsigned long transparent_hugepage_flags __read_mostly =
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE_MADVISE
+ 	(1<<TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG)|
+ #endif
+-#ifdef CONFIG_CACHY
++#if defined(CONFIG_CACHY) || defined(CONFIG_ZEN_INTERACTIVE)
+ 	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_KSWAPD_OR_MADV_FLAG)|
+ #else
+ 	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_REQ_MADV_FLAG)|
+diff --git a/mm/mm_init.c b/mm/mm_init.c
+index d50a54dbb1064bc1dd1e8c14831a8c2480925c66..e4b4f6c9dfe142b24ebbe459c7a57f4a39eb65a6 100644
+--- a/mm/mm_init.c
++++ b/mm/mm_init.c
+@@ -1394,6 +1394,9 @@ static void __meminit pgdat_init_internals(struct pglist_data *pgdat)
+ 	pgdat_init_kcompactd(pgdat);
+ 
+ 	init_waitqueue_head(&pgdat->kswapd_wait);
++#ifdef CONFIG_SWAP
++	init_waitqueue_head(&pgdat->kcompressd_wait);
++#endif
+ 	init_waitqueue_head(&pgdat->pfmemalloc_wait);
+ 
+ 	for (i = 0; i < NR_VMSCAN_THROTTLE; i++)
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index e822f7cc84ae9f68ae8273a1c02263755fb49722..4dcb1bb7a3c7adc4fedb44052c3ae077142f2afa 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -270,7 +270,7 @@ const char * const migratetype_names[MIGRATE_TYPES] = {
+ 
+ int min_free_kbytes = 1024;
+ int user_min_free_kbytes = -1;
+-#ifdef CONFIG_CACHY
++#if defined(CONFIG_CACHY) || defined(CONFIG_ZEN_INTERACTIVE)
+ static int watermark_boost_factor __read_mostly;
+ #else
+ static int watermark_boost_factor __read_mostly = 15000;
+diff --git a/mm/page_io.c b/mm/page_io.c
+index b23f494fcc83daaa989db13b1ba628dd7d357261..a659e95a5e7324bb72298a228ec52fa4d2ad42d6 100644
+--- a/mm/page_io.c
++++ b/mm/page_io.c
+@@ -25,6 +25,7 @@
+ #include <linux/sched/task.h>
+ #include <linux/delayacct.h>
+ #include <linux/zswap.h>
++#include <linux/kthread.h>
+ #include "swap.h"
+ #include "swap_table.h"
+ 
+@@ -244,6 +245,94 @@ static void swap_zeromap_folio_clear(struct folio *folio)
+ 	swap_cluster_unlock(ci);
+ }
+ 
++static bool kcompressd_store(struct folio *folio)
++{
++	pg_data_t *pgdat = folio_pgdat(folio);
++	unsigned int limit = READ_ONCE(vm_kcompressd);
++	unsigned int queued;
++	bool writeback_enabled;
++
++	/*
++	 * A node's kswapd is the only producer, including during hot-remove.
++	 * The acquire pairs with startup publication after queue initialization.
++	 */
++	if (!limit || current != READ_ONCE(pgdat->kswapd) ||
++	    !smp_load_acquire(&pgdat->kcompressd) || !folio_test_anon(folio))
++		return false;
++
++	rcu_read_lock();
++	writeback_enabled = mem_cgroup_zswap_writeback_enabled(folio_memcg(folio));
++	rcu_read_unlock();
++	if (!writeback_enabled)
++		return false;
++
++	if (!zswap_is_enabled() &&
++	    !(READ_ONCE(__swap_entry_to_info(folio->swap)->flags) & SWP_SYNCHRONOUS_IO))
++		return false;
++
++	/* The reference and folio lock protect queued data until completion. */
++	guard(spinlock_irqsave)(&pgdat->kcompress_fifo_lock);
++	if (kfifo_len(&pgdat->kcompress_fifo) >= limit * sizeof(folio))
++		return false;
++	folio_get(folio);
++	queued = kfifo_in(&pgdat->kcompress_fifo, &folio, sizeof(folio));
++	if (queued != sizeof(folio)) {
++		folio_put(folio);
++		return false;
++	}
++	wake_up(&pgdat->kcompressd_wait);
++	return true;
++}
++
++static int swap_writeout_compressed(struct folio *folio,
++				   struct swap_iocb **swap_plug)
++{
++	if (zswap_store(folio)) {
++		count_mthp_stat(folio_order(folio), MTHP_STAT_ZSWPOUT);
++		folio_unlock(folio);
++		return 0;
++	}
++
++	rcu_read_lock();
++	if (!mem_cgroup_zswap_writeback_enabled(folio_memcg(folio))) {
++		rcu_read_unlock();
++		folio_mark_dirty(folio);
++		return AOP_WRITEPAGE_ACTIVATE;
++	}
++	rcu_read_unlock();
++
++	__swap_writepage(folio, swap_plug);
++	return 0;
++}
++
++int kcompressd(void *data)
++{
++	pg_data_t *pgdat = data;
++	struct folio *folio;
++
++	/* Compression must make progress when reclaim exhausted normal reserves. */
++	current->flags |= PF_MEMALLOC | PF_KSWAPD;
++	complete(&pgdat->kcompressd_started);
++	for (;;) {
++		wait_event(pgdat->kcompressd_wait,
++			   kthread_should_stop() || !kfifo_is_empty(&pgdat->kcompress_fifo));
++		while (kfifo_out_locked(&pgdat->kcompress_fifo, &folio,
++				       sizeof(folio), &pgdat->kcompress_fifo_lock)) {
++			/* A changed cgroup policy must not permit forbidden writeback. */
++			if (swap_writeout_compressed(folio, NULL) == AOP_WRITEPAGE_ACTIVATE) {
++				folio_clear_reclaim(folio);
++				folio_unlock(folio);
++			}
++			folio_put(folio);
++			cond_resched();
++		}
++		/* The producer is stopped before shutdown, so the drained queue is final. */
++		if (kthread_should_stop())
++			break;
++	}
++	return 0;
++}
++
+ /*
+  * We may have stale swap cache pages in memory: notice
+  * them here and get rid of the unnecessary final write.
+@@ -282,21 +371,9 @@ int swap_writeout(struct folio *folio, struct swap_iocb **swap_plug)
+ 	 */
+ 	swap_zeromap_folio_clear(folio);
+ 
+-	if (zswap_store(folio)) {
+-		count_mthp_stat(folio_order(folio), MTHP_STAT_ZSWPOUT);
+-		goto out_unlock;
+-	}
+-
+-	rcu_read_lock();
+-	if (!mem_cgroup_zswap_writeback_enabled(folio_memcg(folio))) {
+-		rcu_read_unlock();
+-		folio_mark_dirty(folio);
+-		return AOP_WRITEPAGE_ACTIVATE;
+-	}
+-	rcu_read_unlock();
+-
+-	__swap_writepage(folio, swap_plug);
+-	return 0;
++	if (kcompressd_store(folio))
++		return 0;
++	return swap_writeout_compressed(folio, swap_plug);
+ out_unlock:
+ 	folio_unlock(folio);
+ 	return ret;
+diff --git a/mm/swap.h b/mm/swap.h
+index 77d2d14eda421e72f6b199e68978561da4da4ca8..93387946e9ac3507c9b8240bc6c5a69141769e18 100644
+--- a/mm/swap.h
++++ b/mm/swap.h
+@@ -250,6 +250,8 @@ static inline void swap_read_unplug(struct swap_iocb *plug)
+ }
+ void swap_write_unplug(struct swap_iocb *sio);
+ int swap_writeout(struct folio *folio, struct swap_iocb **swap_plug);
++int kcompressd(void *data);
++extern int vm_kcompressd;
+ void __swap_writepage(struct folio *folio, struct swap_iocb **swap_plug);
+ 
+ /* linux/mm/swap_state.c */
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index f20845c33be69ae3753e1445ff64575114fc83e0..864e48675733f6767ea34f3c984655d2919ca4a2 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -834,6 +834,12 @@ enum folio_references {
+ };
+ 
+ #ifdef CONFIG_LRU_GEN
++
++#define RESWAPPINESS_PROGNAME	"Re-swappiness: MGLRU anon/file independent aging"
++#define RESWAPPINESS_AUTHOR		"Masahito Suzuki"
++
++#define RESWAPPINESS_VERSION	"1.2"
++
+ /*
+  * Only used on a mapped folio in the eviction (rmap walk) path, where promotion
+  * needs to be done by taking the folio off the LRU list and then adding it back
+@@ -2649,17 +2655,15 @@ static bool should_walk_mmu(void)
+ 	return arch_has_hw_pte_young() && get_cap(LRU_GEN_MM_WALK);
+ }
+ 
+-static bool should_clear_pmd_young(void)
+-{
+-	return arch_has_hw_nonleaf_pmd_young() && get_cap(LRU_GEN_NONLEAF_YOUNG);
+-}
+-
+ /******************************************************************************
+  *                          shorthand helpers
+  ******************************************************************************/
+ 
+ #define DEFINE_MAX_SEQ(lruvec)						\
+-	unsigned long max_seq = READ_ONCE((lruvec)->lrugen.max_seq)
++	unsigned long max_seq[ANON_AND_FILE] = {			\
++		READ_ONCE((lruvec)->lrugen.max_seq[LRU_GEN_ANON]),	\
++		READ_ONCE((lruvec)->lrugen.max_seq[LRU_GEN_FILE]),	\
++	}
+ 
+ #define DEFINE_MIN_SEQ(lruvec)						\
+ 	unsigned long min_seq[ANON_AND_FILE] = {			\
+@@ -2722,7 +2726,7 @@ static int get_swappiness(struct lruvec *lruvec, struct scan_control *sc)
+ 
+ static int get_nr_gens(struct lruvec *lruvec, int type)
+ {
+-	return lruvec->lrugen.max_seq - lruvec->lrugen.min_seq[type] + 1;
++	return lruvec->lrugen.max_seq[type] - lruvec->lrugen.min_seq[type] + 1;
+ }
+ 
+ static bool __maybe_unused seq_is_valid(struct lruvec *lruvec)
+@@ -2783,13 +2787,13 @@ static void get_item_key(void *item, int *key)
+ }
+ 
+ static bool test_bloom_filter(struct lru_gen_mm_state *mm_state, unsigned long seq,
+-			      void *item)
++			      void *item, int type)
+ {
+ 	int key[2];
+ 	unsigned long *filter;
+ 	int gen = filter_gen_from_seq(seq);
+ 
+-	filter = READ_ONCE(mm_state->filters[gen]);
++	filter = READ_ONCE(mm_state->filters[type][gen]);
+ 	if (!filter)
+ 		return true;
+ 
+@@ -2799,13 +2803,13 @@ static bool test_bloom_filter(struct lru_gen_mm_state *mm_state, unsigned long s
+ }
+ 
+ static void update_bloom_filter(struct lru_gen_mm_state *mm_state, unsigned long seq,
+-				void *item)
++				void *item, int type)
+ {
+ 	int key[2];
+ 	unsigned long *filter;
+ 	int gen = filter_gen_from_seq(seq);
+ 
+-	filter = READ_ONCE(mm_state->filters[gen]);
++	filter = READ_ONCE(mm_state->filters[type][gen]);
+ 	if (!filter)
+ 		return;
+ 
+@@ -2817,12 +2821,12 @@ static void update_bloom_filter(struct lru_gen_mm_state *mm_state, unsigned long
+ 		set_bit(key[1], filter);
+ }
+ 
+-static void reset_bloom_filter(struct lru_gen_mm_state *mm_state, unsigned long seq)
++static void reset_bloom_filter(struct lru_gen_mm_state *mm_state, unsigned long seq, int type)
+ {
+ 	unsigned long *filter;
+ 	int gen = filter_gen_from_seq(seq);
+ 
+-	filter = mm_state->filters[gen];
++	filter = mm_state->filters[type][gen];
+ 	if (filter) {
+ 		bitmap_clear(filter, 0, BIT(BLOOM_FILTER_SHIFT));
+ 		return;
+@@ -2830,7 +2834,7 @@ static void reset_bloom_filter(struct lru_gen_mm_state *mm_state, unsigned long
+ 
+ 	filter = bitmap_zalloc(BIT(BLOOM_FILTER_SHIFT),
+ 			       __GFP_HIGH | __GFP_NOMEMALLOC | __GFP_NOWARN);
+-	WRITE_ONCE(mm_state->filters[gen], filter);
++	WRITE_ONCE(mm_state->filters[type][gen], filter);
+ }
+ 
+ /******************************************************************************
+@@ -2867,13 +2871,13 @@ static struct mm_struct *get_next_mm(struct lru_gen_mm_walk *walk)
+ 	struct pglist_data *pgdat = lruvec_pgdat(walk->lruvec);
+ 	struct lru_gen_mm_state *mm_state = get_mm_state(walk->lruvec);
+ 
+-	mm = list_entry(mm_state->head, struct mm_struct, lru_gen.list);
++	mm = list_entry(mm_state->head[walk->aging_type], struct mm_struct, lru_gen.list);
+ 	key = pgdat->node_id % BITS_PER_TYPE(mm->lru_gen.bitmap);
+ 
+ 	if (!walk->force_scan && !test_bit(key, &mm->lru_gen.bitmap))
+ 		return NULL;
+ 
+-	clear_bit(key, &mm->lru_gen.bitmap);
++	/* Both type walkers must observe the shared address-space activity hint. */
+ 	mmgrab(mm);
+ 
+ 	return mm;
+@@ -2897,8 +2901,10 @@ void lru_gen_add_mm(struct mm_struct *mm)
+ 		struct lru_gen_mm_state *mm_state = get_mm_state(lruvec);
+ 
+ 		/* the first addition since the last iteration */
+-		if (mm_state->tail == &mm_list->fifo)
+-			mm_state->tail = &mm->lru_gen.list;
++		for (int type = 0; type < ANON_AND_FILE; type++) {
++			if (mm_state->tail[type] == &mm_list->fifo)
++				mm_state->tail[type] = &mm->lru_gen.list;
++		}
+ 	}
+ 
+ 	list_add_tail(&mm->lru_gen.list, &mm_list->fifo);
+@@ -2926,13 +2932,15 @@ void lru_gen_del_mm(struct mm_struct *mm)
+ 		struct lruvec *lruvec = get_lruvec(memcg, nid);
+ 		struct lru_gen_mm_state *mm_state = get_mm_state(lruvec);
+ 
+-		/* where the current iteration continues after */
+-		if (mm_state->head == &mm->lru_gen.list)
+-			mm_state->head = mm_state->head->prev;
++		for (int type = 0; type < ANON_AND_FILE; type++) {
++			/* where the current iteration continues after */
++			if (mm_state->head[type] == &mm->lru_gen.list)
++				mm_state->head[type] = mm_state->head[type]->prev;
+ 
+-		/* where the last iteration ended before */
+-		if (mm_state->tail == &mm->lru_gen.list)
+-			mm_state->tail = mm_state->tail->next;
++			/* where the last iteration ended before */
++			if (mm_state->tail[type] == &mm->lru_gen.list)
++				mm_state->tail[type] = mm_state->tail[type]->next;
++		}
+ 	}
+ 
+ 	list_del_init(&mm->lru_gen.list);
+@@ -3003,19 +3011,19 @@ static void reset_mm_stats(struct lru_gen_mm_walk *walk, bool last)
+ 
+ 	lockdep_assert_held(&get_mm_list(lruvec_memcg(lruvec))->lock);
+ 
+-	hist = lru_hist_from_seq(walk->seq);
++	hist = lru_hist_from_seq(walk->seq[walk->aging_type]);
+ 
+ 	for (i = 0; i < NR_MM_STATS; i++) {
+-		WRITE_ONCE(mm_state->stats[hist][i],
+-			   mm_state->stats[hist][i] + walk->mm_stats[i]);
++		WRITE_ONCE(mm_state->stats[walk->aging_type][hist][i],
++			   mm_state->stats[walk->aging_type][hist][i] + walk->mm_stats[i]);
+ 		walk->mm_stats[i] = 0;
+ 	}
+ 
+ 	if (NR_HIST_GENS > 1 && last) {
+-		hist = lru_hist_from_seq(walk->seq + 1);
++		hist = lru_hist_from_seq(walk->seq[walk->aging_type] + 1);
+ 
+ 		for (i = 0; i < NR_MM_STATS; i++)
+-			WRITE_ONCE(mm_state->stats[hist][i], 0);
++			WRITE_ONCE(mm_state->stats[walk->aging_type][hist][i], 0);
+ 	}
+ }
+ 
+@@ -3024,13 +3032,14 @@ static bool iterate_mm_list(struct lru_gen_mm_walk *walk, struct mm_struct **ite
+ 	bool first = false;
+ 	bool last = false;
+ 	struct mm_struct *mm = NULL;
++	int type = walk->aging_type;
+ 	struct lruvec *lruvec = walk->lruvec;
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+ 	struct lru_gen_mm_list *mm_list = get_mm_list(memcg);
+ 	struct lru_gen_mm_state *mm_state = get_mm_state(lruvec);
+ 
+ 	/*
+-	 * mm_state->seq is incremented after each iteration of mm_list. There
++	 * mm_state->seq[] is incremented after each iteration of mm_list. There
+ 	 * are three interesting cases for this page table walker:
+ 	 * 1. It tries to start a new iteration with a stale max_seq: there is
+ 	 *    nothing left to do.
+@@ -3041,28 +3050,28 @@ static bool iterate_mm_list(struct lru_gen_mm_walk *walk, struct mm_struct **ite
+ 	 */
+ 	spin_lock(&mm_list->lock);
+ 
+-	VM_WARN_ON_ONCE(mm_state->seq + 1 < walk->seq);
++	VM_WARN_ON_ONCE(mm_state->seq[type] + 1 < walk->seq[type]);
+ 
+-	if (walk->seq <= mm_state->seq)
++	if (walk->seq[type] <= mm_state->seq[type])
+ 		goto done;
+ 
+-	if (!mm_state->head)
+-		mm_state->head = &mm_list->fifo;
++	if (!mm_state->head[type])
++		mm_state->head[type] = &mm_list->fifo;
+ 
+-	if (mm_state->head == &mm_list->fifo)
++	if (mm_state->head[type] == &mm_list->fifo)
+ 		first = true;
+ 
+ 	do {
+-		mm_state->head = mm_state->head->next;
+-		if (mm_state->head == &mm_list->fifo) {
+-			WRITE_ONCE(mm_state->seq, mm_state->seq + 1);
++		mm_state->head[type] = mm_state->head[type]->next;
++		if (mm_state->head[type] == &mm_list->fifo) {
++			WRITE_ONCE(mm_state->seq[type], mm_state->seq[type] + 1);
+ 			last = true;
+ 			break;
+ 		}
+ 
+ 		/* force scan for those added after the last iteration */
+-		if (!mm_state->tail || mm_state->tail == mm_state->head) {
+-			mm_state->tail = mm_state->head->next;
++		if (!mm_state->tail[type] || mm_state->tail[type] == mm_state->head[type]) {
++			mm_state->tail[type] = mm_state->head[type]->next;
+ 			walk->force_scan = true;
+ 		}
+ 	} while (!(mm = get_next_mm(walk)));
+@@ -3073,7 +3082,7 @@ done:
+ 	spin_unlock(&mm_list->lock);
+ 
+ 	if (mm && first)
+-		reset_bloom_filter(mm_state, walk->seq + 1);
++		reset_bloom_filter(mm_state, walk->seq[type] + 1, type);
+ 
+ 	if (*iter)
+ 		mmdrop(*iter);
+@@ -3083,7 +3092,7 @@ done:
+ 	return last;
+ }
+ 
+-static bool iterate_mm_list_nowalk(struct lruvec *lruvec, unsigned long seq)
++static bool iterate_mm_list_nowalk(struct lruvec *lruvec, unsigned long seq, int type)
+ {
+ 	bool success = false;
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+@@ -3092,12 +3101,12 @@ static bool iterate_mm_list_nowalk(struct lruvec *lruvec, unsigned long seq)
+ 
+ 	spin_lock(&mm_list->lock);
+ 
+-	VM_WARN_ON_ONCE(mm_state->seq + 1 < seq);
++	VM_WARN_ON_ONCE(mm_state->seq[type] + 1 < seq);
+ 
+-	if (seq > mm_state->seq) {
+-		mm_state->head = NULL;
+-		mm_state->tail = NULL;
+-		WRITE_ONCE(mm_state->seq, mm_state->seq + 1);
++	if (seq > mm_state->seq[type]) {
++		mm_state->head[type] = NULL;
++		mm_state->tail[type] = NULL;
++		WRITE_ONCE(mm_state->seq[type], mm_state->seq[type] + 1);
+ 		success = true;
+ 	}
+ 
+@@ -3159,7 +3168,7 @@ static void reset_ctrl_pos(struct lruvec *lruvec, int type, bool carryover)
+ 	int hist, tier;
+ 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+ 	bool clear = carryover ? NR_HIST_GENS == 1 : NR_HIST_GENS > 1;
+-	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq + 1;
++	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq[type] + 1;
+ 
+ 	lockdep_assert_held(&lruvec->lru_lock);
+ 
+@@ -3297,7 +3306,7 @@ static void reset_batch_size(struct lru_gen_mm_walk *walk)
+ 		WRITE_ONCE(lrugen->nr_pages[gen][type][zone],
+ 			   lrugen->nr_pages[gen][type][zone] + delta);
+ 
+-		if (lru_gen_is_active(lruvec, gen))
++		if (lru_gen_is_active(lruvec, gen, type))
+ 			lru += LRU_ACTIVE;
+ 		__update_lru_size(lruvec, lru, zone, delta);
+ 	}
+@@ -3327,7 +3336,7 @@ static int should_skip_vma(unsigned long start, unsigned long end, struct mm_wal
+ 		return true;
+ 
+ 	if (vma_is_anonymous(vma))
+-		return !walk->swappiness;
++		return walk->aging_type == LRU_GEN_FILE || !walk->swappiness;
+ 
+ 	if (WARN_ON_ONCE(!vma->vm_file || !vma->vm_file->f_mapping))
+ 		return true;
+@@ -3336,8 +3345,13 @@ static int should_skip_vma(unsigned long start, unsigned long end, struct mm_wal
+ 	if (mapping_unevictable(mapping))
+ 		return true;
+ 
++	/* Shmem folios belong to the anonymous LRU type. */
+ 	if (shmem_mapping(mapping))
+-		return !walk->swappiness;
++		return walk->aging_type == LRU_GEN_FILE || !walk->swappiness;
++
++	/* Private file mappings can contain anonymous COW folios. */
++	if (walk->aging_type == LRU_GEN_ANON)
++		return !vma->anon_vma || !walk->swappiness;
+ 
+ 	if (walk->swappiness > MAX_SWAPPINESS)
+ 		return true;
+@@ -3490,7 +3504,7 @@ static bool walk_pte_range(pmd_t *pmd, unsigned long start, unsigned long end,
+ 	struct mem_cgroup *memcg = lruvec_memcg(walk->lruvec);
+ 	struct pglist_data *pgdat = lruvec_pgdat(walk->lruvec);
+ 	DEFINE_MAX_SEQ(walk->lruvec);
+-	int gen = lru_gen_from_seq(max_seq);
++	int gen = lru_gen_from_seq(max_seq[walk->aging_type]);
+ 	unsigned int nr;
+ 	pmd_t pmdval;
+ 
+@@ -3525,7 +3539,7 @@ restart:
+ 			continue;
+ 
+ 		folio = get_pfn_folio(pfn, memcg, pgdat);
+-		if (!folio)
++		if (!folio || folio_is_file_lru(folio) != walk->aging_type)
+ 			continue;
+ 
+ 		if (folio_test_large(folio)) {
+@@ -3578,7 +3592,7 @@ static void walk_pmd_range_locked(pud_t *pud, unsigned long addr, struct vm_area
+ 	struct mem_cgroup *memcg = lruvec_memcg(walk->lruvec);
+ 	struct pglist_data *pgdat = lruvec_pgdat(walk->lruvec);
+ 	DEFINE_MAX_SEQ(walk->lruvec);
+-	int gen = lru_gen_from_seq(max_seq);
++	int gen = lru_gen_from_seq(max_seq[walk->aging_type]);
+ 
+ 	VM_WARN_ON_ONCE(pud_leaf(*pud));
+ 
+@@ -3613,19 +3627,15 @@ static void walk_pmd_range_locked(pud_t *pud, unsigned long addr, struct vm_area
+ 		if (!pmd_present(pmd[i]))
+ 			goto next;
+ 
+-		if (!pmd_trans_huge(pmd[i])) {
+-			if (!walk->force_scan && should_clear_pmd_young() &&
+-			    !mm_has_notifiers(args->mm))
+-				pmdp_test_and_clear_young(vma, addr, pmd + i);
++		if (!pmd_trans_huge(pmd[i]))
+ 			goto next;
+-		}
+ 
+ 		pfn = get_pmd_pfn(pmd[i], vma, addr, pgdat);
+ 		if (pfn == -1)
+ 			goto next;
+ 
+ 		folio = get_pfn_folio(pfn, memcg, pgdat);
+-		if (!folio)
++		if (!folio || folio_is_file_lru(folio) != walk->aging_type)
+ 			goto next;
+ 
+ 		if (!pmdp_test_and_clear_young_notify(vma, addr, pmd + i))
+@@ -3669,11 +3679,7 @@ static void walk_pmd_range(pud_t *pud, unsigned long start, unsigned long end,
+ 
+ 	VM_WARN_ON_ONCE(pud_leaf(*pud));
+ 
+-	/*
+-	 * Finish an entire PMD in two passes: the first only reaches to PTE
+-	 * tables to avoid taking the PMD lock; the second, if necessary, takes
+-	 * the PMD lock to clear the accessed bit in PMD entries.
+-	 */
++	/* Leaf PTE walks avoid the PMD lock; huge PMD updates are batched. */
+ 	pmd = pmd_offset(pud, start & PUD_MASK);
+ restart:
+ 	/* walk_pte_range() may call get_next_vma() */
+@@ -3699,15 +3705,9 @@ restart:
+ 			continue;
+ 		}
+ 
+-		if (!walk->force_scan && should_clear_pmd_young() &&
+-		    !mm_has_notifiers(args->mm)) {
+-			if (!pmd_young(val))
+-				continue;
++		/* Nonleaf accessed bits are shared by both independently aged types. */
+ 
+-			walk_pmd_range_locked(pud, addr, vma, args, bitmap, &first);
+-		}
+-
+-		if (!walk->force_scan && !test_bloom_filter(mm_state, walk->seq, pmd + i))
++		if (!walk->force_scan && !test_bloom_filter(mm_state, walk->seq[walk->aging_type], pmd + i, walk->aging_type))
+ 			continue;
+ 
+ 		walk->mm_stats[MM_NONLEAF_FOUND]++;
+@@ -3718,7 +3718,7 @@ restart:
+ 		walk->mm_stats[MM_NONLEAF_ADDED]++;
+ 
+ 		/* carry over to the next generation */
+-		update_bloom_filter(mm_state, walk->seq + 1, pmd + i);
++		update_bloom_filter(mm_state, walk->seq[walk->aging_type] + 1, pmd + i, walk->aging_type);
+ 	}
+ 
+ 	walk_pmd_range_locked(pud, -1, vma, args, bitmap, &first);
+@@ -3787,7 +3787,7 @@ static void walk_mm(struct mm_struct *mm, struct lru_gen_mm_walk *walk)
+ 		err = -EBUSY;
+ 
+ 		/* another thread might have called inc_max_seq() */
+-		if (walk->seq != max_seq)
++		if (walk->seq[walk->aging_type] != max_seq[walk->aging_type])
+ 			break;
+ 
+ 		/* the caller might be holding the lock for write */
+@@ -3901,7 +3901,7 @@ static void try_to_inc_min_seq(struct lruvec *lruvec, int swappiness)
+ 
+ 	/* find the oldest populated generation */
+ 	for_each_evictable_type(type, swappiness) {
+-		while (min_seq[type] + MIN_NR_GENS <= lrugen->max_seq) {
++		while (min_seq[type] + MIN_NR_GENS <= lrugen->max_seq[type]) {
+ 			gen = lru_gen_from_seq(min_seq[type]);
+ 
+ 			for (zone = 0; zone < MAX_NR_ZONES; zone++) {
+@@ -3923,15 +3923,6 @@ next:
+ 	if (!seq_inc_flag)
+ 		return;
+ 
+-	/* see the comment on lru_gen_folio */
+-	if (swappiness && swappiness <= MAX_SWAPPINESS) {
+-		unsigned long seq = lrugen->max_seq - MIN_NR_GENS;
+-
+-		if (min_seq[LRU_GEN_ANON] > seq && min_seq[LRU_GEN_FILE] < seq)
+-			min_seq[LRU_GEN_ANON] = seq;
+-		else if (min_seq[LRU_GEN_FILE] > seq && min_seq[LRU_GEN_ANON] < seq)
+-			min_seq[LRU_GEN_FILE] = seq;
+-	}
+ 
+ 	for_each_evictable_type(type, swappiness) {
+ 		if (min_seq[type] <= lrugen->min_seq[type])
+@@ -3942,73 +3933,53 @@ next:
+ 	}
+ }
+ 
+-static bool inc_max_seq(struct lruvec *lruvec, unsigned long seq, int swappiness)
++static bool inc_max_seq(struct lruvec *lruvec, unsigned long seq, int type)
+ {
+ 	bool success;
+-	int prev, next;
+-	int type, zone;
++	int prev, next, zone;
+ 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+ restart:
+-	if (seq < READ_ONCE(lrugen->max_seq))
++	if (seq < READ_ONCE(lrugen->max_seq[type]))
+ 		return false;
+ 
+ 	lruvec_lock_irq(lruvec);
+-
+ 	VM_WARN_ON_ONCE(!seq_is_valid(lruvec));
+-
+-	success = seq == lrugen->max_seq;
++	success = seq == lrugen->max_seq[type];
+ 	if (!success)
+ 		goto unlock;
+ 
+-	for (type = 0; type < ANON_AND_FILE; type++) {
+-		if (get_nr_gens(lruvec, type) != MAX_NR_GENS)
+-			continue;
+-
+-		if (inc_min_seq(lruvec, type, swappiness))
+-			continue;
+-
++	if (get_nr_gens(lruvec, type) == MAX_NR_GENS &&
++	    !inc_min_seq(lruvec, type, 1)) {
+ 		lruvec_unlock_irq(lruvec);
+ 		cond_resched();
+ 		goto restart;
+ 	}
+ 
+-	/*
+-	 * Update the active/inactive LRU sizes for compatibility. Both sides of
+-	 * the current max_seq need to be covered, since max_seq+1 can overlap
+-	 * with min_seq[LRU_GEN_ANON] if swapping is constrained. And if they do
+-	 * overlap, cold/hot inversion happens.
+-	 */
+-	prev = lru_gen_from_seq(lrugen->max_seq - 1);
+-	next = lru_gen_from_seq(lrugen->max_seq + 1);
+-
+-	for (type = 0; type < ANON_AND_FILE; type++) {
+-		for (zone = 0; zone < MAX_NR_ZONES; zone++) {
+-			enum lru_list lru = type * LRU_INACTIVE_FILE;
+-			long delta = lrugen->nr_pages[prev][type][zone] -
+-				     lrugen->nr_pages[next][type][zone];
+-
+-			if (!delta)
+-				continue;
++	/* Both ends must be accounted for when generation slots wrap. */
++	prev = lru_gen_from_seq(lrugen->max_seq[type] - 1);
++	next = lru_gen_from_seq(lrugen->max_seq[type] + 1);
++	for (zone = 0; zone < MAX_NR_ZONES; zone++) {
++		enum lru_list lru = type * LRU_INACTIVE_FILE;
++		long delta = lrugen->nr_pages[prev][type][zone] -
++			     lrugen->nr_pages[next][type][zone];
+ 
+-			__update_lru_size(lruvec, lru, zone, delta);
+-			__update_lru_size(lruvec, lru + LRU_ACTIVE, zone, -delta);
+-		}
++		if (!delta)
++			continue;
++		__update_lru_size(lruvec, lru, zone, delta);
++		__update_lru_size(lruvec, lru + LRU_ACTIVE, zone, -delta);
+ 	}
+ 
+-	for (type = 0; type < ANON_AND_FILE; type++)
+-		reset_ctrl_pos(lruvec, type, false);
+-
+-	WRITE_ONCE(lrugen->timestamps[next], jiffies);
+-	/* make sure preceding modifications appear */
+-	smp_store_release(&lrugen->max_seq, lrugen->max_seq + 1);
++	reset_ctrl_pos(lruvec, type, false);
++	WRITE_ONCE(lrugen->timestamps[type][next], jiffies);
++	/* Publication makes preceding generation updates visible to readers. */
++	smp_store_release(&lrugen->max_seq[type], lrugen->max_seq[type] + 1);
+ unlock:
+ 	lruvec_unlock_irq(lruvec);
+-
+ 	return success;
+ }
+ 
+ static bool try_to_inc_max_seq(struct lruvec *lruvec, unsigned long seq,
+-			       int swappiness, bool force_scan)
++			       int type, int swappiness, bool force_scan)
+ {
+ 	bool success;
+ 	struct lru_gen_mm_walk *walk;
+@@ -4016,13 +3987,13 @@ static bool try_to_inc_max_seq(struct lruvec *lruvec, unsigned long seq,
+ 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+ 	struct lru_gen_mm_state *mm_state = get_mm_state(lruvec);
+ 
+-	VM_WARN_ON_ONCE(seq > READ_ONCE(lrugen->max_seq));
++	VM_WARN_ON_ONCE(seq > READ_ONCE(lrugen->max_seq[type]));
+ 
+ 	if (!mm_state)
+-		return inc_max_seq(lruvec, seq, swappiness);
++		return inc_max_seq(lruvec, seq, type);
+ 
+ 	/* see the comment in iterate_mm_list() */
+-	if (seq <= READ_ONCE(mm_state->seq))
++	if (seq <= READ_ONCE(mm_state->seq[type]))
+ 		return false;
+ 
+ 	/*
+@@ -4032,18 +4003,19 @@ static bool try_to_inc_max_seq(struct lruvec *lruvec, unsigned long seq,
+ 	 * is less efficient, but it avoids bursty page faults.
+ 	 */
+ 	if (!should_walk_mmu()) {
+-		success = iterate_mm_list_nowalk(lruvec, seq);
++		success = iterate_mm_list_nowalk(lruvec, seq, type);
+ 		goto done;
+ 	}
+ 
+ 	walk = set_mm_walk(NULL, true);
+ 	if (!walk) {
+-		success = iterate_mm_list_nowalk(lruvec, seq);
++		success = iterate_mm_list_nowalk(lruvec, seq, type);
+ 		goto done;
+ 	}
+ 
+ 	walk->lruvec = lruvec;
+-	walk->seq = seq;
++	walk->aging_type = type;
++	walk->seq[type] = seq;
+ 	walk->swappiness = swappiness;
+ 	walk->force_scan = force_scan;
+ 
+@@ -4054,7 +4026,7 @@ static bool try_to_inc_max_seq(struct lruvec *lruvec, unsigned long seq,
+ 	} while (mm);
+ done:
+ 	if (success) {
+-		success = inc_max_seq(lruvec, seq, swappiness);
++		success = inc_max_seq(lruvec, seq, type);
+ 		WARN_ON_ONCE(!success);
+ 	}
+ 
+@@ -4100,7 +4072,7 @@ static unsigned long lruvec_evictable_size(struct lruvec *lruvec, int swappiness
+ 	DEFINE_MIN_SEQ(lruvec);
+ 
+ 	for_each_evictable_type(type, swappiness) {
+-		for (seq = min_seq[type]; seq <= max_seq; seq++) {
++		for (seq = min_seq[type]; seq <= max_seq[type]; seq++) {
+ 			gen = lru_gen_from_seq(seq);
+ 			for (zone = 0; zone < MAX_NR_ZONES; zone++)
+ 				total += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
+@@ -4125,8 +4097,8 @@ static bool lruvec_is_sizable(struct lruvec *lruvec, struct scan_control *sc)
+ static bool lruvec_is_reclaimable(struct lruvec *lruvec, struct scan_control *sc,
+ 				  unsigned long min_ttl)
+ {
+-	int gen;
+-	unsigned long birth;
++	int type, gen;
++	unsigned long birth = jiffies;
+ 	int swappiness = get_swappiness(lruvec, sc);
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+ 	DEFINE_MIN_SEQ(lruvec);
+@@ -4137,8 +4109,14 @@ static bool lruvec_is_reclaimable(struct lruvec *lruvec, struct scan_control *sc
+ 	if (!lruvec_is_sizable(lruvec, sc))
+ 		return false;
+ 
+-	gen = lru_gen_from_seq(evictable_min_seq(min_seq, swappiness));
+-	birth = READ_ONCE(lruvec->lrugen.timestamps[gen]);
++	for_each_evictable_type(type, swappiness) {
++		unsigned long ts;
++
++		gen = lru_gen_from_seq(min_seq[type]);
++		ts = READ_ONCE(lruvec->lrugen.timestamps[type][gen]);
++		if (time_before(ts, birth))
++			birth = ts;
++	}
+ 
+ 	return time_is_before_jiffies(birth + min_ttl);
+ }
+@@ -4216,6 +4194,7 @@ bool lru_gen_look_around(struct page_vma_mapped_walk *pvmw, unsigned int nr)
+ 	struct lru_gen_mm_state *mm_state;
+ 	unsigned long max_seq;
+ 	int gen;
++	int type = folio_is_file_lru(folio);
+ 
+ 	lockdep_assert_held(pvmw->ptl);
+ 	VM_WARN_ON_ONCE_FOLIO(folio_test_lru(folio), folio);
+@@ -4252,7 +4231,7 @@ bool lru_gen_look_around(struct page_vma_mapped_walk *pvmw, unsigned int nr)
+ 
+ 	memcg = get_mem_cgroup_from_folio(folio);
+ 	lruvec = mem_cgroup_lruvec(memcg, pgdat);
+-	max_seq = READ_ONCE((lruvec)->lrugen.max_seq);
++	max_seq = READ_ONCE(lruvec->lrugen.max_seq[type]);
+ 	gen = lru_gen_from_seq(max_seq);
+ 	mm_state = get_mm_state(lruvec);
+ 
+@@ -4271,7 +4250,7 @@ bool lru_gen_look_around(struct page_vma_mapped_walk *pvmw, unsigned int nr)
+ 			continue;
+ 
+ 		folio = get_pfn_folio(pfn, memcg, pgdat);
+-		if (!folio)
++		if (!folio || folio_is_file_lru(folio) != type)
+ 			continue;
+ 
+ 		if (folio_test_large(folio)) {
+@@ -4303,7 +4282,7 @@ bool lru_gen_look_around(struct page_vma_mapped_walk *pvmw, unsigned int nr)
+ 
+ 	/* feedback from rmap walkers to page table walkers */
+ 	if (mm_state && suitable_to_scan(i, young))
+-		update_bloom_filter(mm_state, max_seq, pvmw->pmd);
++		update_bloom_filter(mm_state, max_seq, pvmw->pmd, type);
+ 
+ 	mem_cgroup_put(memcg);
+ 
+@@ -4456,23 +4435,19 @@ bool recheck_lru_gen_max_memcg(struct mem_cgroup *memcg, int nid)
+ }
+ 
+ static void try_to_inc_max_seq_nowalk(struct mem_cgroup *memcg,
+-				      struct lruvec *lruvec)
++				      struct lruvec *lruvec, int type)
+ {
+ 	struct lru_gen_mm_list *mm_list = get_mm_list(memcg);
+ 	struct lru_gen_mm_state *mm_state = get_mm_state(lruvec);
+-	int swappiness = mem_cgroup_swappiness(memcg);
+ 	DEFINE_MAX_SEQ(lruvec);
+ 	bool success = false;
+ 
+-	/*
+-	 * We are not iterating the mm_list here, updating mm_state->seq is just
+-	 * to make mm walkers work properly.
+-	 */
++	/* The walker sequence must follow the independently aged type. */
+ 	if (mm_state) {
+ 		spin_lock(&mm_list->lock);
+-		VM_WARN_ON_ONCE(mm_state->seq + 1 < max_seq);
+-		if (max_seq > mm_state->seq) {
+-			WRITE_ONCE(mm_state->seq, mm_state->seq + 1);
++		VM_WARN_ON_ONCE(mm_state->seq[type] + 1 < max_seq[type]);
++		if (max_seq[type] > mm_state->seq[type]) {
++			WRITE_ONCE(mm_state->seq[type], mm_state->seq[type] + 1);
+ 			success = true;
+ 		}
+ 		spin_unlock(&mm_list->lock);
+@@ -4481,7 +4456,7 @@ static void try_to_inc_max_seq_nowalk(struct mem_cgroup *memcg,
+ 	}
+ 
+ 	if (success)
+-		inc_max_seq(lruvec, max_seq, swappiness);
++		inc_max_seq(lruvec, max_seq[type], type);
+ }
+ 
+ /*
+@@ -4496,7 +4471,7 @@ void max_lru_gen_memcg(struct mem_cgroup *memcg, int nid)
+ 
+ 	for (type = 0; type < ANON_AND_FILE; type++) {
+ 		while (get_nr_gens(lruvec, type) < MAX_NR_GENS) {
+-			try_to_inc_max_seq_nowalk(memcg, lruvec);
++			try_to_inc_max_seq_nowalk(memcg, lruvec, type);
+ 			cond_resched();
+ 		}
+ 	}
+@@ -4541,10 +4516,10 @@ static void __lru_gen_reparent_memcg(struct lruvec *child_lruvec, struct lruvec
+ 	parent_lrugen = &parent_lruvec->lrugen;
+ 
+ 	for (i = 0; i < get_nr_gens(child_lruvec, type); i++) {
+-		int gen = lru_gen_from_seq(child_lrugen->max_seq - i);
++		int gen = lru_gen_from_seq(child_lrugen->max_seq[type] - i);
+ 		long nr_pages = child_lrugen->nr_pages[gen][type][zone];
+-		int child_lru_active = lru_gen_is_active(child_lruvec, gen) ? LRU_ACTIVE : 0;
+-		int parent_lru_active = lru_gen_is_active(parent_lruvec, gen) ? LRU_ACTIVE : 0;
++		int child_lru_active = lru_gen_is_active(child_lruvec, gen, type) ? LRU_ACTIVE : 0;
++		int parent_lru_active = lru_gen_is_active(parent_lruvec, gen, type) ? LRU_ACTIVE : 0;
+ 
+ 		/* Assuming that child pages are colder than parent pages */
+ 		list_splice_tail_init(&child_lrugen->folios[gen][type][zone],
+@@ -4554,7 +4529,7 @@ static void __lru_gen_reparent_memcg(struct lruvec *child_lruvec, struct lruvec
+ 		WRITE_ONCE(parent_lrugen->nr_pages[gen][type][zone],
+ 			   parent_lrugen->nr_pages[gen][type][zone] + nr_pages);
+ 
+-		if (lru_gen_is_active(child_lruvec, gen) != lru_gen_is_active(parent_lruvec, gen)) {
++		if (lru_gen_is_active(child_lruvec, gen, type) != lru_gen_is_active(parent_lruvec, gen, type)) {
+ 			__update_lru_size(child_lruvec, lru + child_lru_active, zone, -nr_pages);
+ 			__update_lru_size(parent_lruvec, lru + parent_lru_active, zone, nr_pages);
+ 		}
+@@ -4904,20 +4879,15 @@ retry:
+ }
+ 
+ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
+-			     struct scan_control *sc, int swappiness)
++			     struct scan_control *sc, int type)
+ {
+-	DEFINE_MIN_SEQ(lruvec);
++	unsigned long min_seq = READ_ONCE(lruvec->lrugen.min_seq[type]);
+ 
+-	/* have to run aging, since eviction is not possible anymore */
+-	if (evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS > max_seq)
++	if (min_seq + MIN_NR_GENS > max_seq)
+ 		return true;
+-
+-	/* try to avoid aging, do gentle reclaim at the default priority */
+ 	if (sc->priority == DEF_PRIORITY)
+ 		return false;
+-
+-	/* better to run aging even though eviction is still possible */
+-	return evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS == max_seq;
++	return min_seq + MIN_NR_GENS == max_seq;
+ }
+ 
+ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc,
+@@ -4981,7 +4951,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 
+ 	nr_to_scan = get_nr_to_scan(lruvec, sc, memcg, swappiness);
+ 	while (nr_to_scan > 0) {
+-		int delta;
++		int delta, type;
+ 		DEFINE_MAX_SEQ(lruvec);
+ 
+ 		if (mem_cgroup_below_min(sc->target_mem_cgroup, memcg)) {
+@@ -4989,10 +4959,13 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 			break;
+ 		}
+ 
+-		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
+-			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
+-				need_rotate = true;
+-			should_age = true;
++		for_each_evictable_type(type, swappiness) {
++			if (should_run_aging(lruvec, max_seq[type], sc, type)) {
++				if (try_to_inc_max_seq(lruvec, max_seq[type], type,
++						       swappiness, false))
++					need_rotate = true;
++				should_age = true;
++			}
+ 		}
+ 
+ 		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
+@@ -5369,9 +5342,6 @@ static ssize_t enabled_show(struct kobject *kobj, struct kobj_attribute *attr, c
+ 	if (should_walk_mmu())
+ 		caps |= BIT(LRU_GEN_MM_WALK);
+ 
+-	if (should_clear_pmd_young())
+-		caps |= BIT(LRU_GEN_NONLEAF_YOUNG);
+-
+ 	return sysfs_emit(buf, "0x%04x\n", caps);
+ }
+ 
+@@ -5471,7 +5441,7 @@ static void *lru_gen_seq_next(struct seq_file *m, void *v, loff_t *pos)
+ }
+ 
+ static void lru_gen_seq_show_full(struct seq_file *m, struct lruvec *lruvec,
+-				  unsigned long max_seq, unsigned long *min_seq,
++				  unsigned long max_seq[], unsigned long *min_seq,
+ 				  unsigned long seq)
+ {
+ 	int i;
+@@ -5486,11 +5456,13 @@ static void lru_gen_seq_show_full(struct seq_file *m, struct lruvec *lruvec,
+ 			const char *s = "xxx";
+ 			unsigned long n[3] = {};
+ 
+-			if (seq == max_seq) {
++			if (seq == max_seq[type]) {
+ 				s = "RTx";
+ 				n[0] = READ_ONCE(lrugen->avg_refaulted[type][tier]);
+ 				n[1] = READ_ONCE(lrugen->avg_total[type][tier]);
+-			} else if (seq == min_seq[type] || NR_HIST_GENS > 1) {
++			} else if (seq == min_seq[type] ||
++				   (NR_HIST_GENS > 1 && seq < max_seq[type] &&
++				    max_seq[type] - seq < MAX_NR_GENS)) {
+ 				s = "rep";
+ 				n[0] = atomic_long_read(&lrugen->refaulted[hist][type][tier]);
+ 				n[1] = atomic_long_read(&lrugen->evicted[hist][type][tier]);
+@@ -5508,18 +5480,21 @@ static void lru_gen_seq_show_full(struct seq_file *m, struct lruvec *lruvec,
+ 
+ 	seq_puts(m, "                      ");
+ 	for (i = 0; i < NR_MM_STATS; i++) {
+-		const char *s = "xxxx";
+-		unsigned long n = 0;
+-
+-		if (seq == max_seq && NR_HIST_GENS == 1) {
+-			s = "TYFA";
+-			n = READ_ONCE(mm_state->stats[hist][i]);
+-		} else if (seq != max_seq && NR_HIST_GENS > 1) {
+-			s = "tyfa";
+-			n = READ_ONCE(mm_state->stats[hist][i]);
+-		}
++		const char *marks = "xxxx";
++		unsigned long total = 0;
+ 
+-		seq_printf(m, " %10lu%c", n, s[i]);
++		for (type = 0; type < ANON_AND_FILE; type++) {
++			if (seq > max_seq[type] || max_seq[type] - seq >= MAX_NR_GENS)
++				continue;
++			if (seq == max_seq[type] && NR_HIST_GENS == 1) {
++				marks = "TYFA";
++				total += READ_ONCE(mm_state->stats[type][hist][i]);
++			} else if (seq != max_seq[type] && NR_HIST_GENS > 1) {
++				marks = "tyfa";
++				total += READ_ONCE(mm_state->stats[type][hist][i]);
++			}
++		}
++		seq_printf(m, " %10lu%c", total, marks[i]);
+ 	}
+ 	seq_putc(m, '\n');
+ }
+@@ -5548,34 +5523,55 @@ static int lru_gen_seq_show(struct seq_file *m, void *v)
+ 
+ 	seq_printf(m, " node %5d\n", nid);
+ 
+-	if (!full)
+-		seq = evictable_min_seq(min_seq, MAX_SWAPPINESS / 2);
+-	else if (max_seq >= MAX_NR_GENS)
+-		seq = max_seq - MAX_NR_GENS + 1;
+-	else
+-		seq = 0;
+-
+-	for (; seq <= max_seq; seq++) {
+-		int type, zone;
+-		int gen = lru_gen_from_seq(seq);
+-		unsigned long birth = READ_ONCE(lruvec->lrugen.timestamps[gen]);
+-
+-		seq_printf(m, " %10lu %10u", seq, jiffies_to_msecs(jiffies - birth));
+-
+-		for (type = 0; type < ANON_AND_FILE; type++) {
+-			unsigned long size = 0;
+-			char mark = full && seq < min_seq[type] ? 'x' : ' ';
++	{
++		unsigned long first[ANON_AND_FILE];
++		unsigned long last = max(max_seq[LRU_GEN_ANON], max_seq[LRU_GEN_FILE]);
++		int type;
+ 
+-			for (zone = 0; zone < MAX_NR_ZONES; zone++)
+-				size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
++		for (type = 0; type < ANON_AND_FILE; type++)
++			first[type] = full ? max_seq[type] - min(max_seq[type],
++						      (unsigned long)MAX_NR_GENS - 1) :
++					    min_seq[type];
++		seq = min(first[LRU_GEN_ANON], first[LRU_GEN_FILE]);
++		for (; seq <= last; seq++) {
++			int zone, gen = lru_gen_from_seq(seq);
++			unsigned long birth = jiffies;
++			bool present[ANON_AND_FILE];
++
++			for (type = 0; type < ANON_AND_FILE; type++)
++				present[type] = seq >= first[type] && seq <= max_seq[type];
++			/* Independent sequences can leave arbitrarily large gaps. */
++			if (!present[LRU_GEN_ANON] && !present[LRU_GEN_FILE]) {
++				seq = max(first[LRU_GEN_ANON], first[LRU_GEN_FILE]) - 1;
++				continue;
++			}
++			for (type = 0; type < ANON_AND_FILE; type++) {
++				unsigned long timestamp;
+ 
+-			seq_printf(m, " %10lu%c", size, mark);
++				if (!present[type])
++					continue;
++				timestamp = READ_ONCE(lrugen->timestamps[type][gen]);
++				if (time_before(timestamp, birth))
++					birth = timestamp;
++			}
++			seq_printf(m, " %10lu %10u", seq,
++				   jiffies_to_msecs(jiffies - birth));
++			for (type = 0; type < ANON_AND_FILE; type++) {
++				unsigned long size = 0;
++				char mark = full && seq < min_seq[type] ? 'x' : ' ';
++
++				if (present[type]) {
++					for (zone = 0; zone < MAX_NR_ZONES; zone++)
++						size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
++				} else if (full) {
++					mark = '-';
++				}
++				seq_printf(m, " %10lu%c", size, mark);
++			}
++			seq_putc(m, '\n');
++			if (full)
++				lru_gen_seq_show_full(m, lruvec, max_seq, min_seq, seq);
+ 		}
+-
+-		seq_putc(m, '\n');
+-
+-		if (full)
+-			lru_gen_seq_show_full(m, lruvec, max_seq, min_seq, seq);
+ 	}
+ 
+ 	return 0;
+@@ -5591,22 +5587,32 @@ static const struct seq_operations lru_gen_seq_ops = {
+ static int run_aging(struct lruvec *lruvec, unsigned long seq,
+ 		     int swappiness, bool force_scan)
+ {
++	int type;
++	bool success = false;
+ 	DEFINE_MAX_SEQ(lruvec);
+ 
+-	if (seq > max_seq)
+-		return -EINVAL;
+-
+-	return try_to_inc_max_seq(lruvec, max_seq, swappiness, force_scan) ? 0 : -EEXIST;
++	for_each_evictable_type(type, swappiness) {
++		if (seq > max_seq[type])
++			return -EINVAL;
++	}
++	for_each_evictable_type(type, swappiness) {
++		if (try_to_inc_max_seq(lruvec, max_seq[type], type,
++				       swappiness, force_scan))
++			success = true;
++	}
++	return success ? 0 : -EEXIST;
+ }
+ 
+ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_control *sc,
+ 			int swappiness, unsigned long nr_to_reclaim)
+ {
+-	int nr_batch;
++	int nr_batch, type;
+ 	DEFINE_MAX_SEQ(lruvec);
+ 
+-	if (seq + MIN_NR_GENS > max_seq)
+-		return -EINVAL;
++	for_each_evictable_type(type, swappiness) {
++		if (seq + MIN_NR_GENS > max_seq[type])
++			return -EINVAL;
++	}
+ 
+ 	sc->nr_reclaimed = 0;
+ 
+@@ -5798,17 +5804,20 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
+ 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+ 	struct lru_gen_mm_state *mm_state = get_mm_state(lruvec);
+ 
+-	lrugen->max_seq = MIN_NR_GENS + 1;
++	for (type = 0; type < ANON_AND_FILE; type++) {
++		lrugen->max_seq[type] = MIN_NR_GENS + 1;
++		for (i = 0; i <= MIN_NR_GENS + 1; i++)
++			lrugen->timestamps[type][i] = jiffies;
++	}
+ 	lrugen->enabled = lru_gen_enabled();
+ 
+-	for (i = 0; i <= MIN_NR_GENS + 1; i++)
+-		lrugen->timestamps[i] = jiffies;
+-
+ 	for_each_gen_type_zone(gen, type, zone)
+ 		INIT_LIST_HEAD(&lrugen->folios[gen][type][zone]);
+ 
+-	if (mm_state)
+-		mm_state->seq = MIN_NR_GENS;
++	if (mm_state) {
++		mm_state->seq[LRU_GEN_ANON] = MIN_NR_GENS;
++		mm_state->seq[LRU_GEN_FILE] = MIN_NR_GENS;
++	}
+ }
+ 
+ #ifdef CONFIG_MEMCG
+@@ -5845,8 +5854,10 @@ void lru_gen_exit_memcg(struct mem_cgroup *memcg)
+ 			continue;
+ 
+ 		for (i = 0; i < NR_BLOOM_FILTERS; i++) {
+-			bitmap_free(mm_state->filters[i]);
+-			mm_state->filters[i] = NULL;
++			for (int type = 0; type < ANON_AND_FILE; type++) {
++				bitmap_free(mm_state->filters[type][i]);
++				mm_state->filters[type][i] = NULL;
++			}
+ 		}
+ 	}
+ }
+@@ -5858,6 +5869,9 @@ static int __init init_lru_gen(void)
+ 	BUILD_BUG_ON(MIN_NR_GENS + 1 >= MAX_NR_GENS);
+ 	BUILD_BUG_ON(BIT(LRU_GEN_WIDTH) <= MAX_NR_GENS);
+ 
++	pr_info("%s %s by %s\n",
++		RESWAPPINESS_PROGNAME, RESWAPPINESS_VERSION, RESWAPPINESS_AUTHOR);
++
+ 	if (sysfs_create_group(mm_kobj, &lru_gen_attr_group))
+ 		pr_err("lru_gen: failed to create sysfs group\n");
+ 
+@@ -7606,6 +7620,36 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
+ /*
+  * This kswapd start function will be called by init and node-hot-add.
+  */
++#ifdef CONFIG_SWAP
++static void kcompressd_run(pg_data_t *pgdat, int nid)
++{
++	struct task_struct *worker;
++	int result;
++
++	if (pgdat->kcompressd || !pgdat->kswapd)
++		return;
++	result = kfifo_alloc(&pgdat->kcompress_fifo,
++			    KCOMPRESS_FIFO_SIZE * sizeof(struct folio *), GFP_KERNEL);
++	if (result) {
++		pr_err("Failed to allocate kcompressd queue on node %d: %d\n", nid, result);
++		return;
++	}
++	spin_lock_init(&pgdat->kcompress_fifo_lock);
++	init_completion(&pgdat->kcompressd_started);
++	worker = kthread_create_on_node(kcompressd, pgdat, nid, "kcompressd%d", nid);
++	if (IS_ERR(worker)) {
++		pr_err("Failed to start kcompressd on node %d: %pe\n", nid, worker);
++		kfifo_free(&pgdat->kcompress_fifo);
++		return;
++	}
++	wake_up_process(worker);
++	/* Publication requires a running thread that will drain during stop. */
++	wait_for_completion(&pgdat->kcompressd_started);
++	/* The release pairs with the producer's acquire before using the queue. */
++	smp_store_release(&pgdat->kcompressd, worker);
++}
++#endif
++
+ void __meminit kswapd_run(int nid)
+ {
+ 	pg_data_t *pgdat = NODE_DATA(nid);
+@@ -7623,6 +7667,9 @@ void __meminit kswapd_run(int nid)
+ 			wake_up_process(pgdat->kswapd);
+ 		}
+ 	}
++#ifdef CONFIG_SWAP
++	kcompressd_run(pgdat, nid);
++#endif
+ 	pgdat_kswapd_unlock(pgdat);
+ }
+ 
+@@ -7641,10 +7688,33 @@ void __meminit kswapd_stop(int nid)
+ 		kthread_stop(kswapd);
+ 		pgdat->kswapd = NULL;
+ 	}
++#ifdef CONFIG_SWAP
++	if (pgdat->kcompressd) {
++		kthread_stop(pgdat->kcompressd);
++		pgdat->kcompressd = NULL;
++		kfifo_free(&pgdat->kcompress_fifo);
++	}
++#endif
+ 	pgdat_kswapd_unlock(pgdat);
+ }
+ 
++#ifdef CONFIG_SWAP
++int vm_kcompressd = 24;
++static const int kcompress_fifo_limit = KCOMPRESS_FIFO_SIZE;
++#endif
++
+ static const struct ctl_table vmscan_sysctl_table[] = {
++#ifdef CONFIG_SWAP
++	{
++		.procname	= "kcompressd",
++		.data		= &vm_kcompressd,
++		.maxlen		= sizeof(vm_kcompressd),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= (void *)&kcompress_fifo_limit,
++	},
++#endif
+ 	{
+ 		.procname	= "swappiness",
+ 		.data		= &vm_swappiness,
+diff --git a/mm/workingset.c b/mm/workingset.c
+index f351798e723acd69ec383d0b0cfec5796f52144e..3536f97fb91b25e4f47bbdf6f7f43257e35e7040 100644
+--- a/mm/workingset.c
++++ b/mm/workingset.c
+@@ -283,7 +283,7 @@ static bool lru_gen_test_recent(void *shadow, struct lruvec **lruvec,
+ 	memcg = mem_cgroup_from_private_id(memcg_id);
+ 	*lruvec = mem_cgroup_lruvec(memcg, pgdat);
+ 
+-	max_seq = READ_ONCE((*lruvec)->lrugen.max_seq);
++	max_seq = READ_ONCE((*lruvec)->lrugen.max_seq[file]);
+ 	max_seq &= (file ? EVICTION_MASK : EVICTION_MASK_ANON) >> LRU_REFS_WIDTH;
+ 
+ 	return abs_diff(max_seq, *token >> LRU_REFS_WIDTH) < MAX_NR_GENS;
+diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
+index 6257459bcee2477bd393a16f1cfb14298b6a11a5..76a2a1a4fc9b6169defcb76920deb504bd3c059c 100644
+--- a/net/ipv4/inet_connection_sock.c
++++ b/net/ipv4/inet_connection_sock.c
+@@ -619,7 +619,7 @@ static int inet_csk_wait_for_connect(struct sock *sk, long timeo)
+ 	 * having to remove and re-insert us on the wait queue.
+ 	 */
+ 	for (;;) {
+-		prepare_to_wait_exclusive(sk_sleep(sk), &wait,
++		prepare_to_wait_exclusive_lifo(sk_sleep(sk), &wait,
+ 					  TASK_INTERRUPTIBLE);
+ 		release_sock(sk);
+ 		if (reqsk_queue_empty(&icsk->icsk_accept_queue))
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 8b25f3f6452ede8296567970de2d932269f66a3d..d9145614df965df5376fa884bd8898b94b107468 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -5363,7 +5363,7 @@ void __init tcp_init(void)
+ 	tcp_init_mem();
+ 	/* Set per-socket limits to no more than 1/128 the pressure threshold */
+ 	limit = nr_free_buffer_pages() << (PAGE_SHIFT - 7);
+-	max_wshare = min(4UL*1024*1024, limit);
++	max_wshare = min(16UL*1024*1024, limit);
+ 	max_rshare = min(32UL*1024*1024, limit);
+ 
+ 	init_net.ipv4.sysctl_tcp_wmem[0] = PAGE_SIZE;
+diff --git a/net/mac80211/rc80211_minstrel_ht.c b/net/mac80211/rc80211_minstrel_ht.c
+index b73ef3adfcc576908eb8743ff5db2ba2b2710cc6..bf45cc901309ae2c83a8d960a60102c498761fae 100644
+--- a/net/mac80211/rc80211_minstrel_ht.c
++++ b/net/mac80211/rc80211_minstrel_ht.c
+@@ -576,10 +576,18 @@ minstrel_ht_set_best_prob_rate(struct minstrel_ht_sta *mi, u16 *dest, u16 index)
+ 	struct minstrel_mcs_group_data *mg;
+ 	struct minstrel_rate_stats *mrs;
+ 	int tmp_group, tmp_idx, tmp_tp_avg, tmp_prob;
+-	int max_tp_group, max_tp_idx, max_tp_prob;
++	int max_tp_group;
+ 	int cur_tp_avg, cur_group, cur_idx;
+ 	int max_gpr_group, max_gpr_idx;
+ 	int max_gpr_tp_avg, max_gpr_prob;
++	int min_dur;
++
++	min_dur = max(minstrel_get_duration(mi->max_tp_rate[0]),
++		      minstrel_get_duration(mi->max_tp_rate[1]));
++
++	/* A slower fallback rate provides margin against transient noise. */
++	if (minstrel_get_duration(index) <= min_dur * 19 / 16)
++		return;
+ 
+ 	cur_group = MI_RATE_GROUP(index);
+ 	cur_idx = MI_RATE_IDX(index);
+@@ -594,18 +602,11 @@ minstrel_ht_set_best_prob_rate(struct minstrel_ht_sta *mi, u16 *dest, u16 index)
+ 	/* if max_tp_rate[0] is from MCS_GROUP max_prob_rate get selected from
+ 	 * MCS_GROUP as well as CCK_GROUP rates do not allow aggregation */
+ 	max_tp_group = MI_RATE_GROUP(mi->max_tp_rate[0]);
+-	max_tp_idx = MI_RATE_IDX(mi->max_tp_rate[0]);
+-	max_tp_prob = mi->groups[max_tp_group].rates[max_tp_idx].prob_avg;
+ 
+ 	if (minstrel_ht_is_legacy_group(MI_RATE_GROUP(index)) &&
+ 	    !minstrel_ht_is_legacy_group(max_tp_group))
+ 		return;
+ 
+-	/* skip rates faster than max tp rate with lower prob */
+-	if (minstrel_get_duration(mi->max_tp_rate[0]) > minstrel_get_duration(index) &&
+-	    mrs->prob_avg < max_tp_prob)
+-		return;
+-
+ 	max_gpr_group = MI_RATE_GROUP(mg->max_group_prob_rate);
+ 	max_gpr_idx = MI_RATE_IDX(mg->max_group_prob_rate);
+ 	max_gpr_prob = mi->groups[max_gpr_group].rates[max_gpr_idx].prob_avg;
+@@ -663,40 +664,6 @@ minstrel_ht_assign_best_tp_rates(struct minstrel_ht_sta *mi,
+ 
+ }
+ 
+-/*
+- * Try to increase robustness of max_prob rate by decrease number of
+- * streams if possible.
+- */
+-static inline void
+-minstrel_ht_prob_rate_reduce_streams(struct minstrel_ht_sta *mi)
+-{
+-	struct minstrel_mcs_group_data *mg;
+-	int tmp_max_streams, group, tmp_idx, tmp_prob;
+-	int tmp_tp = 0;
+-
+-	if (!mi->sta->deflink.ht_cap.ht_supported)
+-		return;
+-
+-	group = MI_RATE_GROUP(mi->max_tp_rate[0]);
+-	tmp_max_streams = minstrel_mcs_groups[group].streams;
+-	for (group = 0; group < ARRAY_SIZE(minstrel_mcs_groups); group++) {
+-		mg = &mi->groups[group];
+-		if (!mi->supported[group] || group == MINSTREL_CCK_GROUP)
+-			continue;
+-
+-		tmp_idx = MI_RATE_IDX(mg->max_group_prob_rate);
+-		tmp_prob = mi->groups[group].rates[tmp_idx].prob_avg;
+-
+-		if (tmp_tp < minstrel_ht_get_tp_avg(mi, group, tmp_idx, tmp_prob) &&
+-		   (minstrel_mcs_groups[group].streams < tmp_max_streams)) {
+-				mi->max_prob_rate = mg->max_group_prob_rate;
+-				tmp_tp = minstrel_ht_get_tp_avg(mi, group,
+-								tmp_idx,
+-								tmp_prob);
+-		}
+-	}
+-}
+-
+ static u16
+ __minstrel_ht_get_sample_rate(struct minstrel_ht_sta *mi,
+ 			      enum minstrel_sample_type type)
+@@ -769,7 +736,8 @@ minstrel_ht_calc_rate_stats(struct minstrel_priv *mp,
+ 	unsigned int cur_prob;
+ 
+ 	if (unlikely(mrs->attempts > 0)) {
+-		cur_prob = MINSTREL_FRAC(mrs->success, mrs->attempts);
++		cur_prob = MINSTREL_FRAC(mrs->success + mrs->last_success,
++					 mrs->attempts + mrs->last_attempts);
+ 		minstrel_filter_avg_add(&mrs->prob_avg,
+ 					&mrs->prob_avg_1, cur_prob);
+ 		mrs->att_hist += mrs->attempts;
+@@ -1175,8 +1143,6 @@ minstrel_ht_update_stats(struct minstrel_priv *mp, struct minstrel_ht_sta *mi)
+ 
+ 	mi->max_prob_rate = tmp_max_prob_rate;
+ 
+-	/* Try to increase robustness of max_prob_rate*/
+-	minstrel_ht_prob_rate_reduce_streams(mi);
+ 	minstrel_ht_refill_sample_rates(mi);
+ 
+ #ifdef CONFIG_MAC80211_DEBUGFS
+@@ -1255,7 +1221,7 @@ minstrel_ht_ri_txstat_valid(struct minstrel_priv *mp,
+ }
+ 
+ static void
+-minstrel_downgrade_rate(struct minstrel_ht_sta *mi, u16 *idx, bool primary)
++minstrel_downgrade_prob_rate(struct minstrel_ht_sta *mi, u16 *idx)
+ {
+ 	int group, orig_group;
+ 
+@@ -1270,11 +1236,7 @@ minstrel_downgrade_rate(struct minstrel_ht_sta *mi, u16 *idx, bool primary)
+ 		    minstrel_mcs_groups[orig_group].streams)
+ 			continue;
+ 
+-		if (primary)
+-			*idx = mi->groups[group].max_group_tp_rate[0];
+-		else
+-			*idx = mi->groups[group].max_group_tp_rate[1];
+-		break;
++		*idx = mi->groups[group].max_group_prob_rate;
+ 	}
+ }
+ 
+@@ -1285,7 +1247,7 @@ minstrel_ht_tx_status(void *priv, struct ieee80211_supported_band *sband,
+ 	struct ieee80211_tx_info *info = st->info;
+ 	struct minstrel_ht_sta *mi = priv_sta;
+ 	struct ieee80211_tx_rate *ar = info->status.rates;
+-	struct minstrel_rate_stats *rate, *rate2;
++	struct minstrel_rate_stats *rate;
+ 	struct minstrel_priv *mp = priv;
+ 	u32 update_interval = mp->update_interval;
+ 	bool last, update = false;
+@@ -1353,18 +1315,13 @@ minstrel_ht_tx_status(void *priv, struct ieee80211_supported_band *sband,
+ 		/*
+ 		 * check for sudden death of spatial multiplexing,
+ 		 * downgrade to a lower number of streams if necessary.
++		 * only do this for the max_prob_rate to prevent spurious
++		 * rate fluctuations when the link changes suddenly
+ 		 */
+-		rate = minstrel_get_ratestats(mi, mi->max_tp_rate[0]);
++		rate = minstrel_get_ratestats(mi, mi->max_prob_rate);
+ 		if (rate->attempts > 30 &&
+ 		    rate->success < rate->attempts / 4) {
+-			minstrel_downgrade_rate(mi, &mi->max_tp_rate[0], true);
+-			update = true;
+-		}
+-
+-		rate2 = minstrel_get_ratestats(mi, mi->max_tp_rate[1]);
+-		if (rate2->attempts > 30 &&
+-		    rate2->success < rate2->attempts / 4) {
+-			minstrel_downgrade_rate(mi, &mi->max_tp_rate[1], false);
++			minstrel_downgrade_prob_rate(mi, &mi->max_prob_rate);
+ 			update = true;
+ 		}
+ 	}
+diff --git a/net/mac80211/rc80211_minstrel_ht.h b/net/mac80211/rc80211_minstrel_ht.h
+index 4be0401f77210d0327678c989919de54d6586a62..f83fd04b70ec2632666cd98e01c6abb84f165532 100644
+--- a/net/mac80211/rc80211_minstrel_ht.h
++++ b/net/mac80211/rc80211_minstrel_ht.h
+@@ -14,7 +14,7 @@
+ 
+ /* scaled fraction values */
+ #define MINSTREL_SCALE  12
+-#define MINSTREL_FRAC(val, div) (((val) << MINSTREL_SCALE) / div)
++#define MINSTREL_FRAC(val, div) (((val) << MINSTREL_SCALE) / (div))
+ #define MINSTREL_TRUNC(val) ((val) >> MINSTREL_SCALE)
+ 
+ #define EWMA_LEVEL	96	/* ewma weighting factor [/EWMA_DIV] */
+diff --git a/tools/lib/bpf/elf.c b/tools/lib/bpf/elf.c
+index 295dbda245807178fb23aeac312bef3c19724868..453b4223bbaf1cb9af42a10d04c1f036a01fa6ad 100644
+--- a/tools/lib/bpf/elf.c
++++ b/tools/lib/bpf/elf.c
+@@ -369,6 +369,11 @@ out:
+ 	return ret;
+ }
+ 
++#if !defined(__clang__)
++#pragma GCC diagnostic push
++/* https://gcc.gnu.org/PR114952 */
++#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
++#endif
+ /* Find offset of function name in ELF object specified by path. "name" matches
+  * symbol name or name@@LIB for library functions.
+  */
+@@ -384,6 +389,9 @@ long elf_find_func_offset_from_file(const char *binary_path, const char *name)
+ 	elf_close(&elf_fd);
+ 	return ret;
+ }
++#if !defined(__clang__)
++#pragma GCC diagnostic pop
++#endif
+ 
+ struct symbol {
+ 	const char *name;
