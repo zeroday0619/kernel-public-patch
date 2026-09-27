@@ -1,20 +1,20 @@
 # zeroday0619 high performance kernel public patches
 
-> Public patches maintained for the zeroday0619 high performance kernel distribution. Each patch is stored under [`patches/`](./patches/), with compatibility, behavior, application, and verification details under [`docs/`](./docs/).
+> Public patches maintained for the zeroday0619 high performance kernel distribution. The documented integration series is stored under [`patches/`](./patches/), with compatibility, behavior, application, and verification details under [`docs/`](./docs/). A legacy metadata patch is retained at the repository root.
 
 ## Patch catalog
 
-| Patch | Target | Documentation |
+| Patch | Target | Reference |
 | --- | --- | --- |
-| Kernel identity and build metadata | CachyOS Linux `7.2/cachy` at `5c28b66` | [Details](./docs/0001-kernel-metadata.md) |
+| Legacy kernel metadata | Compatibility base not documented | [Patch](./0001-feat-kernel-expose-zeroday0619-kernel-metadata.patch) |
 | Linux 7.2.6 local integration: BORE, acpi_call, DKMS, metadata, Charcoal, video tools | Exact recorded local preimages; not pristine upstream 7.2.6 | [Details](./docs/0002-linux-7.2.6-integration.md) |
 
 ## Repository layout
 
 ```text
 .
+├── 0001-feat-kernel-expose-zeroday0619-kernel-metadata.patch
 ├── patches/
-│   ├── 0001-kernel-metadata/
 │   └── 0002-linux-7.2.6-integration/
 │       ├── series          Ordered integration patches
 │       └── provenance/     Original inputs, not an application series
@@ -24,6 +24,8 @@
 ```
 
 ## Using a patch
+
+For the documented integration series:
 
 1. Open the patch documentation from the catalog.
 2. Prepare the documented base commit or exact recorded preimages. A version
